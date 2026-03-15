@@ -312,7 +312,7 @@ public class MHXXCharmApp extends JFrame {
     static final String[] SKILL_NAMES = {
         "毒","麻痺","睡眠","気絶","聴覚保護","風圧","耐震","だるま","耐暑","耐寒",
         "寒冷適応","炎熱適応","盗み無効","対防御DOWN","狂撃耐性","細菌研究家","裂傷","攻撃","防御","体力",
-        "火耐性","水耐性","雷耐性","氷耐性","龍耐性","全属性耐性","火属性攻撃","水属性攻撃","雷属性攻撃","氷属性攻撃",
+        "火耐性","水耐性","雷耐性","氷耐性","龍耐性","属性耐性","火属性攻撃","水属性攻撃","雷属性攻撃","氷属性攻撃",
         "龍属性攻撃","属性攻撃","特殊攻撃","研ぎ師","匠","斬れ味","剣術","研磨術","鈍器","抜刀会心",
         "抜刀減気","納刀","納刀研磨","刃鱗磨き","装填速度","反動","精密射撃","通常弾強化","貫通弾強化","散弾強化",
         "重撃弾強化","通常弾追加","貫通弾追加","散弾追加","榴弾追加","拡散弾追加","毒弾追加","麻痺弾追加","睡眠弾追加","強撃弾追加",
@@ -442,10 +442,9 @@ public class MHXXCharmApp extends JFrame {
         int id1 = indexOf(data.skill1, sid1);
         if (id1 < 0) return Collections.emptyList();
 
-        boolean s2Any  = S2_ANY.equals(s2);
         boolean s2None = S2_NONE.equals(s2);
         int sid2 = -1, id2 = -1;
-        if (!s2Any && !s2None) {
+        if (!s2None) {
             sid2 = skillNameToId(s2);
             if (sid2 < 0) return Collections.emptyList();
             id2 = indexOf(data.skill2, sid2);
@@ -462,7 +461,7 @@ public class MHXXCharmApp extends JFrame {
         List<Future<?>> futures = new ArrayList<>();
 
         final int fId1 = id1, fId2 = id2;
-        final boolean fS2Any = s2Any, fS2None = s2None;
+        final boolean fS2None = s2None;
 
         for (int t = 0; t < nThreads; t++) {
             final int startFrame = t * chunkSize;
@@ -491,7 +490,7 @@ public class MHXXCharmApp extends JFrame {
                         if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
                         continue;
                     }
-                    if (!fS2Any && !fS2None) {
+                    if (!fS2None) {
                         if (!hasSk2 || rng.r[3] % len2 != fId2) {
                             int done = globalDone.incrementAndGet();
                             if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
@@ -501,11 +500,7 @@ public class MHXXCharmApp extends JFrame {
 
                     Charm c = getCharm(rng, data, origin);
                     boolean match;
-                    if (fS2Any) {
-                        match = greaterMode
-                                ? (c.sp1() >= sp1v && c.slot() >= slotv)
-                                : (c.sp1() == sp1v && c.slot() == slotv);
-                    } else if (fS2None) {
+                    if (fS2None) {
                         match = greaterMode
                                 ? (c.sp1() >= sp1v && c.slot() >= slotv && c.s2Name() == null)
                                 : (c.sp1() == sp1v && c.slot() == slotv && c.s2Name() == null);
@@ -1378,15 +1373,13 @@ public class MHXXCharmApp extends JFrame {
         return tab;
     }
 
-    static final String S2_ANY  = "（任意）";
     static final String S2_NONE = "（なし）";
 
     String[] getSkill2NamesWithSpecial() {
         String[] base = data.getSkill2Names();
-        String[] result = new String[base.length + 2];
-        result[0] = S2_ANY;
-        result[1] = S2_NONE;
-        System.arraycopy(base, 0, result, 2, base.length);
+        String[] result = new String[base.length + 1];
+        result[0] = S2_NONE;
+        System.arraycopy(base, 0, result, 1, base.length);
         return result;
     }
 
@@ -1404,12 +1397,11 @@ public class MHXXCharmApp extends JFrame {
         // 第1スキル: お守り種別のスキルリスト × カテゴリの積集合
         String[] s1Items = getSkillsByCategoryFiltered(data.skill1, catIdx);
         updateFilterCombo(searchS1, s1Items.length > 0 ? s1Items : new String[]{"(該当なし)"});
-        // 第2スキル: 同様 + 任意/なし
+        // 第2スキル: 同様 + なし
         String[] s2Base = getSkillsByCategoryFiltered(data.skill2, catIdx);
-        String[] s2Items = new String[s2Base.length + 2];
-        s2Items[0] = S2_ANY;
-        s2Items[1] = S2_NONE;
-        System.arraycopy(s2Base, 0, s2Items, 2, s2Base.length);
+        String[] s2Items = new String[s2Base.length + 1];
+        s2Items[0] = S2_NONE;
+        System.arraycopy(s2Base, 0, s2Items, 1, s2Base.length);
         updateFilterCombo(searchS2, s2Items);
         updateSp1Range();
         updateSp2State();
@@ -1417,7 +1409,7 @@ public class MHXXCharmApp extends JFrame {
 
     void updateSp2State() {
         String sel = getComboText(searchS2);
-        boolean needSp2 = !sel.isEmpty() && !S2_ANY.equals(sel) && !S2_NONE.equals(sel);
+        boolean needSp2 = !sel.isEmpty() && !S2_NONE.equals(sel);
         searchSp2.setEnabled(needSp2);
         if (!needSp2) {
             searchSp2.setModel(new DefaultComboBoxModel<>(new String[]{"0"}));
@@ -1453,7 +1445,7 @@ public class MHXXCharmApp extends JFrame {
     /** 第2スキル選択に応じてSP2コンボの選択肢を更新 */
     void updateSp2Range() {
         String s2Name = getComboText(searchS2);
-        if (S2_ANY.equals(s2Name) || S2_NONE.equals(s2Name)) return;
+        if (S2_NONE.equals(s2Name)) return;
         int sid = skillNameToId(s2Name);
         if (sid < 0) { searchSp2.setModel(new DefaultComboBoxModel<>(new String[]{"1"})); return; }
         int idx = indexOf(data.skill2, sid);
@@ -1486,7 +1478,7 @@ public class MHXXCharmApp extends JFrame {
         searchModel.setRowCount(0);
         int sp1v, sp2v, slotv, maxF;
         String s2 = getComboText(searchS2);
-        boolean s2Special = S2_ANY.equals(s2) || S2_NONE.equals(s2);
+        boolean s2Special = S2_NONE.equals(s2);
         try {
             sp1v = Integer.parseInt(Objects.toString(searchSp1.getSelectedItem(), "1"));
             sp2v = s2Special ? 0 : Integer.parseInt(Objects.toString(searchSp2.getSelectedItem(), "1"));
@@ -2114,7 +2106,7 @@ public class MHXXCharmApp extends JFrame {
         descPanel.setOpaque(false);
         JLabel descLabel = new JLabel(
             "<html><body style='width:800px; color:#8888aa;'>" +
-            "起動→Continue A→Bキャンセル(N-1回)→コンティニュー画面表示→待機時間→決定→ロード→マカ錬金の一連操作を自動化するコードを生成します。<br>" +
+            "起動→Continue A→Bキャンセル(N回)→待機時間→Continue決定→ロード→マカ錬金の一連操作を自動化するコードを生成します。<br>" +
             "計算式: <b style='color:#00d2ff;'>目標F = 基本消費(F) + Continue1回消費(F) × 回数 + 0.030(F/ms) × 待機時間(ms)</b><br>" +
             "Continue回数(整数)で大まかに合わせ、待機時間(ms)で端数を調整します。" +
             "</body></html>");
@@ -2231,6 +2223,69 @@ public class MHXXCharmApp extends JFrame {
         adjR3.add(adjResult);
         adjustPanel.add(adjR3);
 
+        // 補正ログテーブル
+        String[] adjLogCols = {"#", "目標F", "実測F", "ズレ", "Continue", "待機時間(ms)"};
+        javax.swing.table.DefaultTableModel adjLogModel = new javax.swing.table.DefaultTableModel(adjLogCols, 0);
+        JTable adjLogTable = new JTable(adjLogModel);
+        adjLogTable.setBackground(BG2);
+        adjLogTable.setForeground(FG);
+        adjLogTable.setFont(FONT_MONO_SMALL);
+        adjLogTable.setGridColor(BG2.brighter());
+        adjLogTable.setRowHeight(28);
+        adjLogTable.getTableHeader().setBackground(BG2.darker());
+        adjLogTable.getTableHeader().setForeground(FG);
+        adjLogTable.getTableHeader().setFont(FONT_UI_BOLD);
+        JScrollPane adjLogSp = new JScrollPane(adjLogTable);
+        setupScrollSpeed(adjLogSp);
+        adjLogSp.setPreferredSize(new java.awt.Dimension(0, 120));
+        adjLogSp.getViewport().setBackground(BG2);
+
+        JPanel adjLogBtnPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        adjLogBtnPanel.setOpaque(false);
+        JButton adjLogClear = makeButton("ログクリア", BTN_BG);
+        adjLogClear.addActionListener(e -> adjLogModel.setRowCount(0));
+        adjLogBtnPanel.add(adjLogClear);
+        JButton adjLogCsv = makeButton("CSV保存", BTN_BG);
+        adjLogCsv.addActionListener(e -> {
+            if (adjLogModel.getRowCount() == 0) {
+                statusLabel.setText("ログが空です");
+                return;
+            }
+            JFileChooser fc = new JFileChooser();
+            fc.setSelectedFile(new java.io.File("correction_log.csv"));
+            if (fc.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+                try (java.io.PrintWriter pw = new java.io.PrintWriter(
+                        new java.io.OutputStreamWriter(
+                            new java.io.FileOutputStream(fc.getSelectedFile()), "UTF-8"))) {
+                    // BOM + ヘッダー
+                    pw.print("\uFEFF");
+                    for (int c = 0; c < adjLogModel.getColumnCount(); c++) {
+                        if (c > 0) pw.print(",");
+                        pw.print(adjLogModel.getColumnName(c));
+                    }
+                    pw.println();
+                    // データ
+                    for (int r = 0; r < adjLogModel.getRowCount(); r++) {
+                        for (int c = 0; c < adjLogModel.getColumnCount(); c++) {
+                            if (c > 0) pw.print(",");
+                            pw.print(adjLogModel.getValueAt(r, c));
+                        }
+                        pw.println();
+                    }
+                    statusLabel.setText("補正ログをCSV保存しました: " + fc.getSelectedFile().getName());
+                } catch (Exception ex) {
+                    statusLabel.setText("CSV保存に失敗: " + ex.getMessage());
+                }
+            }
+        });
+        adjLogBtnPanel.add(adjLogCsv);
+
+        JPanel adjLogPanel = titled("補正ログ");
+        adjLogPanel.setLayout(new BorderLayout(4, 4));
+        adjLogPanel.add(adjLogBtnPanel, BorderLayout.NORTH);
+        adjLogPanel.add(adjLogSp, BorderLayout.CENTER);
+        adjustPanel.add(adjLogPanel);
+
         adjBtn.addActionListener(e -> {
             try {
                 long target = Long.parseLong(adjTarget.getText().trim());
@@ -2239,60 +2294,72 @@ public class MHXXCharmApp extends JFrame {
                 long diffF = actual - target;
                 String dir = diffF > 0 ? "オーバー" : "不足";
 
-                double cVal = Double.parseDouble(arduinoC.getText().trim());
                 double t2min = 5000, t2max = 20000;
 
-                // Continue回数が入力されていれば実測fcを逆算して自動反映
+                // Continue回数が入力されていれば前回Ncとして使用
                 String ncText = adjNc.getText().trim();
-                String fcInfo = "";
                 int prevNc = 0;
                 double fc = Double.parseDouble(arduinoFc.getText().trim());
-                double oldFc = fc;
                 if (!ncText.isEmpty()) {
                     prevNc = Integer.parseInt(ncText);
-                    if (prevNc > 0) {
-                        double actualFc = (actual - cVal - 0.030 * prevT2) / prevNc;
-                        long roundedFc = (long) actualFc; // 切り捨て
-                        fc = roundedFc; // 再計算に実測値を使用
-                        arduinoFc.setText(String.valueOf(roundedFc));
-                        fcInfo = "<br>Continue消費を <b>%.0f → %d</b> (実測%.2f) に自動更新".formatted(
-                            oldFc, roundedFc, actualFc);
-                    }
                 }
 
-                // 実測fcで最適なContinue回数とT2を再計算
                 int bestNc = -1;
-                double bestT2 = -1;
-                for (int nc = 0; nc < 10000; nc++) {
-                    double t2 = (target - cVal - fc * nc) / 0.030;
-                    if (t2 >= t2min && t2 <= t2max) {
-                        bestNc = nc;
-                        bestT2 = t2;
-                        break;
+                long bestT2 = -1;
+
+                // まず前回と同じNcのまま、ズレ分だけ待機時間を調整
+                long diffMs = Math.round(diffF / 0.030);
+                long adjustedT2 = prevT2 - diffMs;
+                if (prevNc > 0 && adjustedT2 >= t2min && adjustedT2 <= t2max) {
+                    bestNc = prevNc;
+                    bestT2 = adjustedT2;
+                }
+
+                // 待機時間の範囲に収まらない場合、Ncを変更して待機時間を範囲内に収める
+                if (bestNc < 0 && prevNc > 0) {
+                    // ズレをfcの整数倍で吸収し、残りを待機時間で調整
+                    // adjustedT2が負(オーバー) → Ncを減らす、adjustedT2が大きすぎ(不足) → Ncを増やす
+                    int ncStep = (adjustedT2 < t2min) ? -1 : 1;
+                    for (int nc = prevNc + ncStep; nc >= 0 && nc < 10000; nc += ncStep) {
+                        long t2candidate = adjustedT2 + Math.round((prevNc - nc) * fc / 0.030);
+                        if (t2candidate >= t2min && t2candidate <= t2max) {
+                            bestNc = nc;
+                            bestT2 = t2candidate;
+                            break;
+                        }
                     }
                 }
 
                 if (bestNc < 0) {
-                    adjResult.setText(("<html>ズレ: %+dF (%s)" + fcInfo +
+                    adjResult.setText(("<html>ズレ: %+dF (%s)" +
                         "<br><span style='color:#ffc107;'>⚠ 待機時間の範囲内で解が見つかりません</span></html>").formatted(
                         diffF, dir));
                     adjResult.setForeground(WARN);
                 } else {
-                    long newT2 = Math.round(bestT2);
                     int ncDiff = bestNc - prevNc;
-                    long t2Diff = newT2 - prevT2;
+                    long t2Diff = bestT2 - prevT2;
                     String ncChange = ncDiff == 0 ? "変更なし" : "%+d回".formatted(ncDiff);
 
                     adjResult.setText(("<html>ズレ: %+dF (%s)<br>" +
                         "補正後: Continue <b>%d回</b> (%s) / 待機時間 <b>%d ms</b> (%+d ms)" +
-                        fcInfo + "</html>").formatted(
-                        diffF, dir, bestNc, ncChange, newT2, t2Diff));
+                        "</html>").formatted(
+                        diffF, dir, bestNc, ncChange, bestT2, t2Diff));
                     adjResult.setForeground(SUCCESS);
 
                     // 補正後のパラメータでコードを再生成
-                    codeArea.setText(generateArduinoCode(bestNc, newT2));
+                    codeArea.setText(generateArduinoCode(bestNc, bestT2));
                     codeArea.setCaretPosition(0);
-                    statusLabel.setText("補正: Continue %d回, 待機時間 %d ms でコードを再生成しました".formatted(bestNc, newT2));
+                    statusLabel.setText("補正: Continue %d回, 待機時間 %d ms でコードを再生成しました".formatted(bestNc, bestT2));
+
+                    // ログに追記
+                    adjLogModel.addRow(new Object[]{
+                        adjLogModel.getRowCount() + 1,
+                        target, actual,
+                        "%+d".formatted(diffF),
+                        bestNc,
+                        bestT2
+                    });
+                    adjLogTable.scrollRectToVisible(adjLogTable.getCellRect(adjLogModel.getRowCount() - 1, 0, true));
                 }
             } catch (NumberFormatException ex) {
                 adjResult.setText("数値を入力してください");
@@ -2464,8 +2531,8 @@ public class MHXXCharmApp extends JFrame {
                     // 事前待機 (30秒)
                     waitWithKeepAlive(30000);
 
-                    // Continue A→Bキャンセル (%1$d回中 %2$d回キャンセル)
-                    for (unsigned long i = 0; i < %2$d; i++){
+                    // Continue A→Bキャンセル (%d回)
+                    for (unsigned long i = 0; i < %d; i++){
                         SwitchControlLibrary().pressButton(Button::A);
                         SwitchControlLibrary().sendReport();
                         delay(100);
@@ -2480,21 +2547,14 @@ public class MHXXCharmApp extends JFrame {
                         delay(100);
                     }
 
-                    // 最後の1回: コンティニュー画面を開く (計%1$d回目)
-                    pushButton(Button::A, 250);
-
-                """.formatted(numContinue, numContinue - 1) : """
-                    // コンティニュー画面を開く (Continue 0回)
-                    pushButton(Button::A, 250);
-
-                """;
+                """.formatted(numContinue, numContinue) : "";
 
         var tail = """
-                    // コンティニュー画面で待機時間 (%d ms)
+                    // 待機時間 (%d ms)
                     waitWithKeepAlive(%d);
 
-                    // 決定してロード
-                    pushButton(Button::A, 250, 3);
+                    // Continue決定 → ロード
+                    pushButton(Button::A, 250, 4);
                     delay(9500);
 
                     // ココット村 → マカ錬金屋へダッシュ

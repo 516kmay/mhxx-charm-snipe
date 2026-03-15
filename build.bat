@@ -13,7 +13,5 @@ if %ERRORLEVEL% neq 0 (
     pause
     exit /b 1
 )
-echo Creating JAR...
-jar cfm MHXXCharmApp.jar MANIFEST.MF -C build .
-echo Done! Double-click MHXXCharmApp.jar to run.
-pause
+echo Starting...
+java -cp build MHXXCharmApp
