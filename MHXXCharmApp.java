@@ -442,9 +442,10 @@ public class MHXXCharmApp extends JFrame {
         int id1 = indexOf(data.skill1, sid1);
         if (id1 < 0) return Collections.emptyList();
 
+        boolean s2Any  = S2_ANY.equals(s2);
         boolean s2None = S2_NONE.equals(s2);
         int sid2 = -1, id2 = -1;
-        if (!s2None) {
+        if (!s2Any && !s2None) {
             sid2 = skillNameToId(s2);
             if (sid2 < 0) return Collections.emptyList();
             id2 = indexOf(data.skill2, sid2);
@@ -461,7 +462,7 @@ public class MHXXCharmApp extends JFrame {
         List<Future<?>> futures = new ArrayList<>();
 
         final int fId1 = id1, fId2 = id2;
-        final boolean fS2None = s2None;
+        final boolean fS2Any = s2Any, fS2None = s2None;
 
         for (int t = 0; t < nThreads; t++) {
             final int startFrame = t * chunkSize;
@@ -490,7 +491,7 @@ public class MHXXCharmApp extends JFrame {
                         if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
                         continue;
                     }
-                    if (!fS2None) {
+                    if (!fS2Any && !fS2None) {
                         if (!hasSk2 || rng.r[3] % len2 != fId2) {
                             int done = globalDone.incrementAndGet();
                             if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
@@ -500,7 +501,11 @@ public class MHXXCharmApp extends JFrame {
 
                     Charm c = getCharm(rng, data, origin);
                     boolean match;
-                    if (fS2None) {
+                    if (fS2Any) {
+                        match = greaterMode
+                                ? (c.sp1() >= sp1v && c.slot() >= slotv)
+                                : (c.sp1() == sp1v && c.slot() == slotv);
+                    } else if (fS2None) {
                         match = greaterMode
                                 ? (c.sp1() >= sp1v && c.slot() >= slotv && c.s2Name() == null)
                                 : (c.sp1() == sp1v && c.slot() == slotv && c.s2Name() == null);
@@ -1374,12 +1379,14 @@ public class MHXXCharmApp extends JFrame {
     }
 
     static final String S2_NONE = "（なし）";
+    static final String S2_ANY  = "（任意）";
 
     String[] getSkill2NamesWithSpecial() {
         String[] base = data.getSkill2Names();
-        String[] result = new String[base.length + 1];
+        String[] result = new String[base.length + 2];
         result[0] = S2_NONE;
-        System.arraycopy(base, 0, result, 1, base.length);
+        result[1] = S2_ANY;
+        System.arraycopy(base, 0, result, 2, base.length);
         return result;
     }
 
@@ -1397,11 +1404,12 @@ public class MHXXCharmApp extends JFrame {
         // 第1スキル: お守り種別のスキルリスト × カテゴリの積集合
         String[] s1Items = getSkillsByCategoryFiltered(data.skill1, catIdx);
         updateFilterCombo(searchS1, s1Items.length > 0 ? s1Items : new String[]{"(該当なし)"});
-        // 第2スキル: 同様 + なし
+        // 第2スキル: 同様 + なし/任意
         String[] s2Base = getSkillsByCategoryFiltered(data.skill2, catIdx);
-        String[] s2Items = new String[s2Base.length + 1];
+        String[] s2Items = new String[s2Base.length + 2];
         s2Items[0] = S2_NONE;
-        System.arraycopy(s2Base, 0, s2Items, 1, s2Base.length);
+        s2Items[1] = S2_ANY;
+        System.arraycopy(s2Base, 0, s2Items, 2, s2Base.length);
         updateFilterCombo(searchS2, s2Items);
         updateSp1Range();
         updateSp2State();
@@ -1409,7 +1417,7 @@ public class MHXXCharmApp extends JFrame {
 
     void updateSp2State() {
         String sel = getComboText(searchS2);
-        boolean needSp2 = !sel.isEmpty() && !S2_NONE.equals(sel);
+        boolean needSp2 = !sel.isEmpty() && !S2_NONE.equals(sel) && !S2_ANY.equals(sel);
         searchSp2.setEnabled(needSp2);
         if (!needSp2) {
             searchSp2.setModel(new DefaultComboBoxModel<>(new String[]{"0"}));
@@ -1445,7 +1453,7 @@ public class MHXXCharmApp extends JFrame {
     /** 第2スキル選択に応じてSP2コンボの選択肢を更新 */
     void updateSp2Range() {
         String s2Name = getComboText(searchS2);
-        if (S2_NONE.equals(s2Name)) return;
+        if (S2_NONE.equals(s2Name) || S2_ANY.equals(s2Name)) return;
         int sid = skillNameToId(s2Name);
         if (sid < 0) { searchSp2.setModel(new DefaultComboBoxModel<>(new String[]{"1"})); return; }
         int idx = indexOf(data.skill2, sid);
@@ -1478,7 +1486,7 @@ public class MHXXCharmApp extends JFrame {
         searchModel.setRowCount(0);
         int sp1v, sp2v, slotv, maxF;
         String s2 = getComboText(searchS2);
-        boolean s2Special = S2_NONE.equals(s2);
+        boolean s2Special = S2_ANY.equals(s2) || S2_NONE.equals(s2);
         try {
             sp1v = Integer.parseInt(Objects.toString(searchSp1.getSelectedItem(), "1"));
             sp2v = s2Special ? 0 : Integer.parseInt(Objects.toString(searchSp2.getSelectedItem(), "1"));
@@ -2294,7 +2302,8 @@ public class MHXXCharmApp extends JFrame {
                 long diffF = actual - target;
                 String dir = diffF > 0 ? "オーバー" : "不足";
 
-                double t2min = 5000, t2max = 20000;
+                double t2min = Double.parseDouble(arduinoT2min.getText().trim());
+                double t2max = Double.parseDouble(arduinoT2max.getText().trim());
 
                 // Continue回数が入力されていれば前回Ncとして使用
                 String ncText = adjNc.getText().trim();
@@ -2315,16 +2324,29 @@ public class MHXXCharmApp extends JFrame {
                     bestT2 = adjustedT2;
                 }
 
-                // 待機時間の範囲に収まらない場合、Ncを変更して待機時間を範囲内に収める
-                if (bestNc < 0 && prevNc > 0) {
-                    // ズレをfcの整数倍で吸収し、残りを待機時間で調整
-                    // adjustedT2が負(オーバー) → Ncを減らす、adjustedT2が大きすぎ(不足) → Ncを増やす
-                    int ncStep = (adjustedT2 < t2min) ? -1 : 1;
-                    for (int nc = prevNc + ncStep; nc >= 0 && nc < 10000; nc += ncStep) {
-                        long t2candidate = adjustedT2 + Math.round((prevNc - nc) * fc / 0.030);
-                        if (t2candidate >= t2min && t2candidate <= t2max) {
+                // 待機時間の範囲に収まらない場合、目標フレームから再計算
+                // ただし実測ズレを反映: 補正目標 = target + (target - actual) = 2*target - actual
+                if (bestNc < 0) {
+                    double cVal = Double.parseDouble(arduinoC.getText().trim());
+                    long correctedTarget = 2 * target - actual; // ズレ分を逆方向にオフセット
+                    for (int nc = 0; nc < 10000; nc++) {
+                        double t2 = (correctedTarget - cVal - fc * nc) / 0.030;
+                        if (t2 >= t2min && t2 <= t2max) {
                             bestNc = nc;
-                            bestT2 = t2candidate;
+                            bestT2 = Math.round(t2);
+                            break;
+                        }
+                    }
+                }
+
+                // それでも見つからない場合、元の目標フレームで再計算
+                if (bestNc < 0) {
+                    double cVal = Double.parseDouble(arduinoC.getText().trim());
+                    for (int nc = 0; nc < 10000; nc++) {
+                        double t2 = (target - cVal - fc * nc) / 0.030;
+                        if (t2 >= t2min && t2 <= t2max) {
+                            bestNc = nc;
+                            bestT2 = Math.round(t2);
                             break;
                         }
                     }
@@ -2523,7 +2545,7 @@ public class MHXXCharmApp extends JFrame {
                     delay(50);
 
                     // MHXX起動 → ゲームモード選択画面までA連打
-                    pushButton(Button::A, 250, 34);
+                    pushButton(Button::A, 255, 32);
 
                 """.formatted(numContinue, waitMs);
 
