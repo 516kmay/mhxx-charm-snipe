@@ -1203,7 +1203,18 @@ public class MHXXCharmApp extends JFrame {
         t.getTableHeader().setBackground(ACCENT2);
         t.getTableHeader().setForeground(Color.WHITE);
         t.getTableHeader().setFont(FONT_UI_BOLD);
-        t.setAutoCreateRowSorter(true);
+        t.setAutoCreateRowSorter(false);
+        javax.swing.table.TableRowSorter<DefaultTableModel> sorter = new javax.swing.table.TableRowSorter<>(model) {
+            @Override public java.util.Comparator<?> getComparator(int column) {
+                return (java.util.Comparator<Object>) (o1, o2) -> {
+                    if (o1 instanceof Number && o2 instanceof Number) {
+                        return Double.compare(((Number) o1).doubleValue(), ((Number) o2).doubleValue());
+                    }
+                    return String.valueOf(o1).compareTo(String.valueOf(o2));
+                };
+            }
+        };
+        t.setRowSorter(sorter);
         DefaultTableCellRenderer ctr = new DefaultTableCellRenderer() {
             @Override
             public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
@@ -2234,15 +2245,9 @@ public class MHXXCharmApp extends JFrame {
         // 補正ログテーブル
         String[] adjLogCols = {"#", "目標F", "実測F", "ズレ", "Continue", "待機時間(ms)"};
         javax.swing.table.DefaultTableModel adjLogModel = new javax.swing.table.DefaultTableModel(adjLogCols, 0);
-        JTable adjLogTable = new JTable(adjLogModel);
-        adjLogTable.setBackground(BG2);
-        adjLogTable.setForeground(FG);
+        JTable adjLogTable = makeTable(adjLogModel);
         adjLogTable.setFont(FONT_MONO_SMALL);
-        adjLogTable.setGridColor(BG2.brighter());
         adjLogTable.setRowHeight(28);
-        adjLogTable.getTableHeader().setBackground(BG2.darker());
-        adjLogTable.getTableHeader().setForeground(FG);
-        adjLogTable.getTableHeader().setFont(FONT_UI_BOLD);
         JScrollPane adjLogSp = new JScrollPane(adjLogTable);
         setupScrollSpeed(adjLogSp);
         adjLogSp.setPreferredSize(new java.awt.Dimension(0, 120));
@@ -2377,7 +2382,7 @@ public class MHXXCharmApp extends JFrame {
                     adjLogModel.addRow(new Object[]{
                         adjLogModel.getRowCount() + 1,
                         target, actual,
-                        "%+d".formatted(diffF),
+                        diffF,
                         bestNc,
                         bestT2
                     });
