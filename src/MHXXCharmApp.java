@@ -15,360 +15,60 @@ import java.util.concurrent.*;
  *
  * 元プロジェクト: https://github.com/apmnnn/mhxx-rng
  *
- * コンパイル: javac --release 21 -encoding UTF-8 MHXXCharmApp.java
+ * コンパイル: javac --release 21 -encoding UTF-8 *.java
  * 実行:       java MHXXCharmApp
  */
 public class MHXXCharmApp extends JFrame {
 
     // ================================================================
-    // Color Theme
+    // Theme定数へのエイリアス（Theme.javaで定義）
     // ================================================================
-    // ================================================================
-    // Color Theme (ユニバーサルデザイン対応・WCAG AA準拠)
-    // ================================================================
-    static final Color BG       = new Color(0x1a, 0x1a, 0x2e);   // 背景
-    static final Color BG2      = new Color(0x16, 0x21, 0x3e);   // パネル背景
-    static final Color FG       = new Color(0xe8, 0xe8, 0xe8);   // テキスト (BG上13.9:1 AAA)
-    static final Color ACCENT   = new Color(0xc0, 0x39, 0x2b);   // ボタン/ヘッダー背景 (白文字5.4:1 AA)
-    static final Color ACCENT_T = new Color(0xff, 0x99, 0x88);   // テキスト用アクセント (BG2上7.7:1 AAA)
-    static final Color ACCENT2  = new Color(0x1a, 0x44, 0x7a);   // 選択/紺 (白文字9.8:1 AAA)
-    static final Color SUCCESS  = new Color(0x00, 0xd2, 0xff);   // 水色 (BG2上8.8:1 AAA, 色覚安全)
-    static final Color WARN     = new Color(0xff, 0xc1, 0x07);   // 黄 (BG2上9.8:1 AAA, 色覚安全)
-    static final Color BTN_BG   = new Color(0x1a, 0x44, 0x7a);   // ボタン背景 = ACCENT2
-    static final Color GREEN    = new Color(0x00, 0x7a, 0x6e);   // ティール (白文字5.2:1 AA, 赤緑色覚安全)
-    static final Color DIM      = new Color(0x88, 0x88, 0xaa);   // 無効テキスト (BG上5.0:1 AA)
+    static final Color BG       = Theme.BG;
+    static final Color BG2      = Theme.BG2;
+    static final Color FG       = Theme.FG;
+    static final Color ACCENT   = Theme.ACCENT;
+    static final Color ACCENT_T = Theme.ACCENT_T;
+    static final Color ACCENT2  = Theme.ACCENT2;
+    static final Color SUCCESS  = Theme.SUCCESS;
+    static final Color WARN     = Theme.WARN;
+    static final Color BTN_BG   = Theme.BTN_BG;
+    static final Color GREEN    = Theme.GREEN;
+    static final Color DIM      = Theme.DIM;
 
-    static Font FONT_UI;
-    static Font FONT_UI_BOLD;
-    static Font FONT_MONO;
-    static Font FONT_MONO_SMALL;
-    static Font FONT_LARGE;
-    static Font FONT_TIMER;
-    static Font FONT_SMALL;
-    static Font FONT_HEADER;
-
-    static {
-        // 日本語対応フォントの候補（優先順）
-        String[] candidates = {"Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic UI",
-                "Meiryo", "Hiragino Sans", "MS Gothic", "SansSerif"};
-        String fontName = "SansSerif";
-        GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
-        Set<String> available = new HashSet<>(Arrays.asList(ge.getAvailableFontFamilyNames()));
-        for (String c : candidates) {
-            if (available.contains(c)) { fontName = c; break; }
-        }
-        // 等幅フォントの候補（日本語対応）
-        String[] monoCandidates = {"Noto Sans Mono CJK JP", "MS Gothic", "Monospaced"};
-        String monoName = "Monospaced";
-        for (String c : monoCandidates) {
-            if (available.contains(c)) { monoName = c; break; }
-        }
-        FONT_UI        = new Font(fontName, Font.PLAIN, 14);
-        FONT_UI_BOLD   = new Font(fontName, Font.BOLD, 14);
-        FONT_MONO      = new Font(monoName, Font.BOLD, 44);
-        FONT_MONO_SMALL= new Font(monoName, Font.PLAIN, 13);
-        FONT_LARGE     = new Font(fontName, Font.BOLD, 16);
-        FONT_TIMER     = new Font(monoName, Font.PLAIN, 13);
-        FONT_SMALL     = new Font(fontName, Font.PLAIN, 13);
-        FONT_HEADER    = new Font(fontName, Font.BOLD, 20);
-    }
+    static final Font FONT_UI         = Theme.FONT_UI;
+    static final Font FONT_UI_BOLD    = Theme.FONT_UI_BOLD;
+    static final Font FONT_MONO       = Theme.FONT_MONO;
+    static final Font FONT_MONO_SMALL = Theme.FONT_MONO_SMALL;
+    static final Font FONT_LARGE      = Theme.FONT_LARGE;
+    static final Font FONT_TIMER      = Theme.FONT_TIMER;
+    static final Font FONT_SMALL      = Theme.FONT_SMALL;
+    static final Font FONT_HEADER     = Theme.FONT_HEADER;
 
     // ================================================================
-    // RNG Engine - 128bit Xorshift (L15, R4, R21)
+    // RNG Engine (MHXXRng.javaに分離、ここでは旧名RNGをエイリアスとして参照)
     // ================================================================
-    static final long[] INITIAL_SEED = {0x0194FD72L, 0x79E6C985L, 0x08DD9701L, 0x41CFCE91L};
-    static final long MASK32 = 0xFFFFFFFFL;
-
-    static class RNG {
-        long x, y, z, w, t;
-        long f;
-        long[] r = new long[7];
-
-        RNG() { init(); }
-
-        void init() {
-            x = INITIAL_SEED[0]; y = INITIAL_SEED[1];
-            z = INITIAL_SEED[2]; w = INITIAL_SEED[3];
-            t = 0; f = 0;
-            Arrays.fill(r, 0);
-        }
-
-        void ascend() {
-            t = (x ^ (x << 15)) & MASK32;
-            x = y; y = z; z = w;
-            w = (w ^ (w >>> 21) ^ t ^ (t >>> 4)) & MASK32;
-            f++;
-        }
-
-        void descend() {
-            long tt = (w ^ z ^ (z >>> 21)) & MASK32;
-            tt = (tt ^ (tt >>> 4)) & MASK32;
-            tt = (tt ^ (tt >>> 8)) & MASK32;
-            tt = (tt ^ (tt >>> 16)) & MASK32;
-            w = z; z = y; y = x;
-            x = (tt ^ (tt << 15) ^ (tt << 30)) & MASK32;
-            f--;
-        }
-
-        void roll() {
-            System.arraycopy(r, 1, r, 0, 6);
-            r[6] = w;
-            ascend();
-        }
-
-        static BigInteger polyMul(BigInteger p1, BigInteger p2) {
-            BigInteger res = BigInteger.ZERO;
-            while (p2.signum() > 0) {
-                if (p2.testBit(0)) res = res.xor(p1);
-                p1 = p1.shiftLeft(1);
-                p2 = p2.shiftRight(1);
-            }
-            return res;
-        }
-
-        static BigInteger polyMod(BigInteger p, BigInteger m) {
-            int mLen = m.bitLength();
-            while (true) {
-                int delta = p.bitLength() - mLen;
-                if (delta < 0) break;
-                p = p.xor(m.shiftLeft(delta));
-            }
-            return p;
-        }
-
-        static BigInteger polyPowMod(BigInteger base, BigInteger exp, BigInteger mod) {
-            BigInteger res = BigInteger.ONE;
-            base = polyMod(base, mod);
-            while (exp.signum() > 0) {
-                if (exp.testBit(0))
-                    res = polyMod(polyMul(res, base), mod);
-                base = polyMod(polyMul(base, base), mod);
-                exp = exp.shiftRight(1);
-            }
-            return res;
-        }
-
-        void jump(long frame) {
-            init();
-            BigInteger period = BigInteger.ONE.shiftLeft(128).subtract(BigInteger.ONE);
-            BigInteger mod = new BigInteger("100000201a8362f671442057eea368001", 16);
-            BigInteger fBig = BigInteger.valueOf(frame).mod(period);
-            BigInteger rPoly = polyPowMod(BigInteger.TWO, fBig, mod);
-
-            long sx = 0, sy = 0, sz = 0, sw = 0;
-            while (rPoly.signum() > 0) {
-                if (rPoly.testBit(0)) {
-                    sx ^= x; sy ^= y; sz ^= z; sw ^= w;
-                }
-                rPoly = rPoly.shiftRight(1);
-                ascend();
-            }
-            x = sx; y = sy; z = sz; w = sw;
-            f = frame;
-            for (int i = 0; i < 7; i++) roll();
-        }
-    }
+    // 注: 既存コードが `new RNG()` や `RNG rng = ...` と書いているため、
+    //     MHXXRngをRNGという名前でインポート相当にできない。
+    //     代わりにMHXXRngを継承した空のサブクラスを用意する。
+    static class RNG extends MHXXRng {}
 
     // ================================================================
-    // Charm Data Tables
+    // Charm Data Tables (CharmData.javaに分離)
     // ================================================================
-    static class CharmData {
-        int[] skill1, skill2;
-        int[][] sp1, sp2;
-        int[][] slotvalue;
-        int th, kind;
+    // CharmDataクラスはtop-level公開クラス (CharmData.java) へ移動した。
 
-        void setBlue() {
-            skill1 = new int[]{4,5,10,11,14,15,25,31,32,35,36,37,38,39,40,41,42,44,45,47,
-                    48,49,50,64,65,66,68,70,71,72,73,76,77,78,79,80,81,82,83,84,
-                    85,86,87,90,92,93,94,95,97,99,100,101,106,107,108,109,114,115,116,122,123,132};
-            sp1 = new int[][]{{3,7},{5,10},{3,7},{3,7},{3,7},{5,10},{3,7},{3,7},{3,7},{3,7},
-                    {3,7},{1,5},{2,6},{1,5},{1,5},{5,10},{5,10},{3,7},{2,6},{2,6},
-                    {2,6},{2,6},{2,6},{1,5},{1,5},{1,5},{3,7},{2,6},{1,5},{2,6},
-                    {2,6},{2,6},{2,6},{3,7},{3,7},{2,6},{2,6},{2,6},{1,5},{3,7},
-                    {3,7},{5,10},{5,10},{2,6},{2,6},{1,5},{1,5},{1,5},{2,6},{2,6},
-                    {2,6},{1,5},{2,6},{1,5},{3,7},{3,7},{3,7},{1,5},{3,7},{2,6},{3,7},{3,7}};
-            skill2 = new int[]{4,5,17,18,25,26,27,28,29,30,32,33,34,35,36,37,39,40,41,43,
-                    44,45,47,48,49,50,64,65,66,68,69,70,71,74,75,76,77,78,79,80,
-                    81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,99,100,101,
-                    105,106,107,108,109,114,115,116,119,122,123,125,132,134,135,136,
-                    161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178};
-            sp2 = new int[][]{{3,5},{5,7},{7,10},{5,13},{5,7},{5,13},{5,13},{5,13},{5,13},{5,13},
-                    {5,7},{7,10},{3,5},{5,7},{5,7},{3,5},{5,5},{2,8},{5,7},{3,3},
-                    {5,7},{5,7},{3,5},{3,5},{3,5},{3,5},{3,5},{3,5},{3,5},{5,7},
-                    {7,10},{3,5},{1,3},{3,5},{3,3},{3,5},{3,5},{3,5},{3,5},{3,5},
-                    {3,5},{3,5},{1,3},{3,5},{3,5},{7,10},{7,10},{5,10},{5,10},{3,5},
-                    {5,10},{3,5},{1,3},{1,3},{1,3},{3,3},{3,5},{3,5},{3,5},{1,3},
-                    {7,10},{3,5},{1,3},{5,7},{5,7},{7,10},{1,3},{3,5},{5,12},{3,5},
-                    {5,7},{3,5},{7,10},{5,7},{3,5},{5,7},{3,3},{3,3},{3,3},{3,3},
-                    {3,3},{3,3},{3,3},{3,3},{3,3},{3,3},{3,3},{3,3},{3,3},{3,3},
-                    {3,3},{3,3},{3,3},{3,3}};
-            slotvalue = new int[][]{{100,100,100},{3,53,88},{5,55,89},{7,57,89},{13,58,89},
-                    {16,60,90},{22,62,90},{30,66,90},{38,68,91},{50,72,91},
-                    {55,75,92},{59,77,92},{64,81,94},{67,83,94},{71,86,96},
-                    {74,88,96},{79,91,98},{82,92,98},{86,94,99},{90,96,99}};
-            th = 15; kind = 0;
-        }
-
-        void setRed() {
-            skill1 = new int[]{4,5,10,11,14,15,25,26,27,28,29,30,31,32,35,36,38,41,42,44,
-                    45,47,48,49,50,65,68,70,72,73,76,77,78,79,81,82,84,85,86,87,
-                    90,92,97,99,100,103,104,106,108,109,114,116,122,123,124,132};
-            sp1 = new int[][]{{1,5},{1,5},{1,5},{1,5},{1,5},{1,8},{1,5},{1,7},{1,7},{1,7},
-                    {1,7},{1,7},{1,5},{1,6},{1,5},{1,5},{1,6},{1,6},{1,6},{1,6},
-                    {1,5},{1,5},{1,5},{1,5},{1,5},{1,3},{1,5},{1,5},{1,5},{1,5},
-                    {1,5},{1,5},{1,6},{1,6},{1,6},{1,6},{1,6},{1,6},{1,6},{1,6},
-                    {1,5},{1,6},{1,6},{1,5},{1,5},{1,7},{1,7},{1,5},{1,5},{1,6},
-                    {1,7},{1,6},{1,5},{1,5},{1,5},{1,7}};
-            skill2 = new int[]{3,4,5,17,18,19,20,21,22,23,24,25,26,27,28,29,30,32,33,34,
-                    35,36,37,39,40,41,42,44,45,47,48,49,50,64,65,66,68,69,70,71,
-                    74,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,
-                    95,97,99,100,101,103,104,105,106,107,108,109,110,114,115,116,117,119,120,122,
-                    123,124,125,132,134,135,136,143,144,145,146,147,148,149,150,151,152,153,154,155,
-                    156,157,158,159,160};
-            sp2 = new int[][]{{10,13},{3,3},{10,3},{10,10},{10,10},{10,13},{10,13},{10,13},{10,13},{10,13},
-                    {10,13},{3,3},{10,13},{10,13},{10,13},{10,13},{10,13},{10,4},{10,8},{5,5},
-                    {3,3},{3,3},{3,3},{3,3},{5,8},{10,4},{3,3},{3,4},{3,3},{3,3},
-                    {3,3},{3,3},{3,3},{3,3},{5,5},{3,3},{5,5},{10,10},{3,3},{3,3},
-                    {3,3},{3,3},{3,3},{3,4},{3,4},{5,5},{3,4},{3,4},{3,3},{3,4},
-                    {3,4},{3,4},{3,4},{10,10},{10,10},{3,3},{10,10},{3,4},{3,3},{3,3},
-                    {3,3},{3,4},{5,5},{5,5},{3,3},{10,10},{10,10},{5,5},{5,5},{3,3},
-                    {5,5},{3,3},{10,12},{10,9},{3,3},{3,4},{10,12},{10,12},{10,10},{3,3},
-                    {5,5},{5,5},{3,3},{8,10},{3,3},{3,3},{3,3},{3,3},{3,3},{3,3},
-                    {3,3},{3,3},{3,3},{3,3},{3,3},{3,3},{3,3},{3,3},{3,3},{3,3},
-                    {3,3},{3,3},{3,3},{3,3},{3,3}};
-            slotvalue = new int[][]{{8,58,88},{9,59,88},{16,61,89},{17,62,89},{23,63,89},
-                    {25,65,90},{31,66,90},{38,68,90},{45,71,91},{58,76,91},
-                    {63,79,92},{66,80,92},{71,83,94},{74,84,94},{78,87,96},
-                    {82,90,96},{86,93,98},{88,94,98},{91,96,99},{94,97,99}};
-            th = 25; kind = 1;
-        }
-
-        void setYellow() {
-            skill1 = new int[]{0,1,2,3,5,6,7,13,17,18,19,20,21,22,23,24,26,27,28,29,
-                    30,32,33,38,41,44,46,51,52,53,54,55,62,63,68,69,72,73,78,79,
-                    81,84,85,86,87,88,89,91,97,98,99,100,103,104,106,108,109,110,113,114,
-                    116,117,119,120,122,123,124,126,129,131,132};
-            sp1 = new int[][]{{1,5},{1,5},{1,5},{1,8},{1,4},{1,7},{1,7},{1,7},{1,4},{1,4},
-                    {1,8},{1,6},{1,6},{1,6},{1,6},{1,6},{1,7},{1,7},{1,7},{1,7},
-                    {1,7},{1,4},{1,4},{1,4},{1,6},{1,4},{1,6},{1,6},{1,10},{1,10},
-                    {1,10},{1,10},{1,10},{1,10},{1,3},{1,4},{1,3},{1,3},{1,6},{1,6},
-                    {1,6},{1,6},{1,4},{1,6},{1,6},{1,6},{1,6},{1,6},{1,6},{1,5},
-                    {1,3},{1,3},{1,5},{1,5},{1,3},{1,3},{1,6},{1,8},{1,8},{1,7},
-                    {1,6},{1,7},{1,8},{1,8},{1,4},{1,3},{1,3},{1,8},{1,8},{1,8},{1,3}};
-            skill2 = new int[]{0,1,2,3,6,7,8,9,12,13,14,15,16,17,18,19,20,21,22,23,
-                    24,32,40,46,51,52,53,54,55,56,57,58,59,60,61,62,63,65,67,68,
-                    69,72,73,88,89,91,98,99,100,102,103,104,105,106,108,110,111,112,113,117,
-                    118,119,120,121,123,124,126,127,128,129,130,131,132,133};
-            sp2 = new int[][]{{10,7},{10,7},{10,7},{10,10},{10,8},{10,8},{10,10},{10,10},{10,10},{10,8},
-                    {5,5},{5,5},{10,10},{7,7},{7,7},{10,10},{10,10},{10,10},{10,10},{10,10},
-                    {10,10},{4,4},{5,5},{10,10},{8,8},{10,10},{10,10},{10,10},{10,10},{10,10},
-                    {10,10},{10,10},{10,12},{10,12},{10,10},{10,10},{10,10},{3,3},{10,10},{5,5},
-                    {7,7},{5,5},{5,5},{8,8},{8,8},{8,8},{5,5},{5,5},{5,5},{10,10},
-                    {7,7},{7,7},{8,8},{5,5},{5,5},{10,10},{10,10},{10,10},{10,10},{4,4},
-                    {10,10},{10,10},{10,10},{10,13},{5,5},{5,5},{10,10},{10,13},{10,10},{10,10},
-                    {10,13},{10,10},{5,5},{10,13}};
-            slotvalue = new int[][]{{2,72,100},{9,74,100},{16,76,100},{23,78,100},{30,80,100},
-                    {37,82,100},{44,84,100},{51,86,100},{58,88,100},{75,90,100},
-                    {83,92,100},{87,95,100},{90,97,100},{92,98,100},{94,99,100},
-                    {95,99,100},{97,100,100},{98,100,100},{99,100,100},{99,100,100}};
-            th = 35; kind = 2;
-        }
-
-        int getSlot(int fill, int num) {
-            if (fill < 1) fill = 1;
-            if (fill > 20) fill = 20;
-            int[] sv = slotvalue[fill - 1];
-            if (num >= sv[2]) return 3;
-            if (num >= sv[1]) return 2;
-            if (num >= sv[0]) return 1;
-            return 0;
-        }
-
-        int getRare(int slot, int fill) {
-            int n = slot * 2 + fill;
-            if (kind == 0) return n >= 13 ? 10 : n >= 8 ? 9 : 8;
-            if (kind == 1) return n >= 13 ? 7 : n >= 8 ? 6 : 5;
-            if (kind == 2) return n >= 8 ? 4 : 3;
-            return n >= 8 ? 2 : 1;
-        }
-
-        String[] getSkill1Names() {
-            String[] names = new String[skill1.length];
-            for (int i = 0; i < skill1.length; i++) names[i] = SKILL_NAMES[skill1[i]];
-            return names;
-        }
-
-        String[] getSkill2Names() {
-            String[] names = new String[skill2.length];
-            for (int i = 0; i < skill2.length; i++) names[i] = SKILL_NAMES[skill2[i]];
-            return names;
-        }
-    }
 
     // ================================================================
-    // Skill Names
+    // Skill Names (SkillNames.javaに分離、ここではエイリアス)
     // ================================================================
-    static final String[] SKILL_NAMES = {
-        "毒","麻痺","睡眠","気絶","聴覚保護","風圧","耐震","だるま","耐暑","耐寒",
-        "寒冷適応","炎熱適応","盗み無効","対防御DOWN","狂撃耐性","細菌研究家","裂傷","攻撃","防御","体力",
-        "火耐性","水耐性","雷耐性","氷耐性","龍耐性","属性耐性","火属性攻撃","水属性攻撃","雷属性攻撃","氷属性攻撃",
-        "龍属性攻撃","属性攻撃","特殊攻撃","研ぎ師","匠","斬れ味","剣術","研磨術","鈍器","抜刀会心",
-        "抜刀減気","納刀","納刀研磨","刃鱗磨き","装填速度","反動","精密射撃","通常弾強化","貫通弾強化","散弾強化",
-        "重撃弾強化","通常弾追加","貫通弾追加","散弾追加","榴弾追加","拡散弾追加","毒弾追加","麻痺弾追加","睡眠弾追加","強撃弾追加",
-        "属性弾追加","接撃弾追加","減気弾追加","爆破弾追加","速射","射法","装填数","変則射撃","弾薬節約","達人",
-        "痛撃","連撃","特殊会心","属性会心","会心強化","裏会心","溜め短縮","スタミナ","体術","気力回復",
-        "走行継続","回避性能","回避距離","泡沫","ガード性能","ガード強化","ＫＯ","減気攻撃","笛","砲術",
-        "重撃","爆弾強化","本気","闘魂","無傷","チャンス","龍気","底力","逆境","逆上",
-        "窮地","根性","気配","采配","号令","乗り","跳躍","無心","我慢","ＳＰ延長",
-        "千里眼","観察眼","狩人","運搬","加護","英雄の盾","回復量","回復速度","効果持続","広域",
-        "腹減り","食いしん坊","食事","節食","肉食","茸食","野草知識","調合成功率","調合数","高速収集",
-        "採取","ハチミツ","護石王","気まぐれ","運気","剥ぎ取り","捕獲","ベルナの心","ココットの心","ポッケの心",
-        "ユクモの心","龍識船の心","飛行酒場の心","紅兜","大雪主","矛砕","岩穿","紫毒姫","宝纏","白疾風",
-        "隻眼","黒炎王","金雷公","荒鉤爪","燼滅刃","朧隠","鎧裂","天眼","青電主","銀嶺",
-        "鏖魔","真・紅兜","真・大雪主","真・矛砕","真・岩穿","真・紫毒姫","真・宝纏","真・白疾風","真・隻眼","真・黒炎王",
-        "真・金雷公","真・荒鉤爪","真・燼滅刃","真・朧隠","真・鎧裂","真・天眼","真・青電主","真・銀嶺","真・鏖魔","北辰納豆流",
-        "斬術","食欲","トラップマスター","剛腕","祈願","裏稼業","刀匠","射手","状態異常攻撃強化","怒",
-        "回避術","居合術","頑強","剛撃","盾持ち","潔癖","増幅","護石収集","強欲","対鋼龍",
-        "対霞龍","対炎龍","胴系統倍加","秘術","護石強化"
-    };
+    static final String[] SKILL_NAMES       = SkillNames.SKILL_NAMES;
+    static final String[] KIND_NAMES        = SkillNames.KIND_NAMES;
+    static final String[] SKILL_CATEGORIES  = SkillNames.SKILL_CATEGORIES;
+    static final int[][]  SKILL_CATEGORY_IDS= SkillNames.SKILL_CATEGORY_IDS;
 
-    static final String[] KIND_NAMES = {"風化したお守り","古びたお守り","光るお守り","なぞのお守り"};
-
-    // スキルカテゴリ分類
-    static final String[] SKILL_CATEGORIES = {
-        "全て","攻撃系","防御・回復系","戦闘・スタミナ系","剣士用","ガンナー用",
-        "耐性・状態異常","採取・報酬系","二つ名","真・二つ名"
-    };
-    static final int[][] SKILL_CATEGORY_IDS = {
-        {}, // 全て → 特別扱い
-        {17,69,70,71,72,73,74,75,76,92,93,94,95,96,97,98,99,100,26,27,28,29,30,31,32,86,87,89,90,91,105,106},
-        {18,19,20,21,22,23,24,25,81,82,83,84,85,101,114,115,116,117,118,119,126},
-        {77,78,79,80,39,40,41,42,43,107,108,109},
-        {33,34,35,36,37,38,76},
-        {44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68},
-        {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16},
-        {102,110,111,112,113,120,121,122,123,124,125,127,128,129,130,131,132,133,134,135,136},
-        {143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160},
-        {161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178},
-    };
-
-    /** お守り種別のスキルリストとカテゴリの積集合を返す */
+    /** お守り種別のスキルリストとカテゴリの積集合を返す（SkillNamesへの転送） */
     static String[] getSkillsByCategoryFiltered(int[] skillIds, int categoryIndex) {
-        if (categoryIndex == 0) {
-            // 全て → skillIdsをそのまま名前に変換
-            String[] result = new String[skillIds.length];
-            for (int i = 0; i < skillIds.length; i++) result[i] = SKILL_NAMES[skillIds[i]];
-            return result;
-        }
-        int[] catIds = SKILL_CATEGORY_IDS[categoryIndex];
-        Set<Integer> catSet = new HashSet<>();
-        for (int id : catIds) catSet.add(id);
-        List<String> filtered = new ArrayList<>();
-        for (int sid : skillIds) {
-            if (catSet.contains(sid)) filtered.add(SKILL_NAMES[sid]);
-        }
-        return filtered.toArray(new String[0]);
+        return SkillNames.getSkillsByCategoryFiltered(skillIds, categoryIndex);
     }
 
     // ================================================================
@@ -618,6 +318,136 @@ public class MHXXCharmApp extends JFrame {
     }
 
     // ================================================================
+    // Reward Reverse (報酬逆算)
+    // ================================================================
+    static final String[] REWARD_ITEMS = {
+        "謎の骨", "釣りミミズ", "生肉", "砥石",
+        "力の成長餌", "重の成長餌", "速の成長餌"
+    };
+
+    static String rewardFromValue(int val) {
+        if (val < 20) return "謎の骨";
+        if (val < 40) return "釣りミミズ";
+        if (val < 65) return "生肉";
+        if (val < 85) return "砥石";
+        if (val < 90) return "力の成長餌";
+        if (val < 95) return "重の成長餌";
+        return "速の成長餌";
+    }
+
+    record RewardSearchResult(long frame, String[] rewards) {}
+
+    /**
+     * 報酬の個数と並びからフレームを逆算する。
+     *
+     * @param totalCount   報酬合計個数（通常＋追加）
+     * @param normalCount  通常報酬の固定枠数
+     * @param targetItems  各枠のアイテム名（長さ == totalCount）
+     * @param maxFrames    検索範囲
+     * @param cb           ヒット時コールバック（未使用、null可）
+     * @param pcb          進捗コールバック
+     * @param cancel       キャンセルフラグ
+     * @return 候補フレームのリスト
+     */
+    static List<RewardSearchResult> reverseSearchRewards(
+            int totalCount, int normalCount, String[] targetItems, int maxFrames,
+            SearchCallback cb, ProgressCallback pcb,
+            java.util.concurrent.atomic.AtomicBoolean cancel) {
+
+        int expectedAdditional = totalCount - normalCount;
+        if (expectedAdditional < 0 || expectedAdditional > 4) return Collections.emptyList();
+        if (totalCount < 1) return Collections.emptyList();
+        if (targetItems.length != totalCount) return Collections.emptyList();
+
+        int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
+        if (maxFrames < nThreads * 1000) nThreads = 1;
+
+        int chunkSize = maxFrames / nThreads;
+        java.util.concurrent.atomic.AtomicInteger globalDone = new java.util.concurrent.atomic.AtomicInteger(0);
+        List<RewardSearchResult> allResults = Collections.synchronizedList(new ArrayList<>());
+        ExecutorService exec = Executors.newFixedThreadPool(nThreads);
+        List<Future<?>> futures = new ArrayList<>();
+
+        for (int t = 0; t < nThreads; t++) {
+            final int startFrame = t * chunkSize;
+            final int endFrame = (t == nThreads - 1) ? maxFrames : (t + 1) * chunkSize;
+            futures.add(exec.submit(() -> {
+                RNG rng = new RNG();
+                rng.jumpRaw(startFrame);
+
+                int localCount = endFrame - startFrame;
+                int reportInterval = Math.max(1, maxFrames / 100);
+
+                for (int i = 0; i < localCount; i++) {
+                    if (cancel != null && cancel.get()) break;
+                    long currentFrame = startFrame + i;
+
+                    // RNG状態を退避
+                    long sx = rng.x, sy = rng.y, sz = rng.z, sw = rng.w;
+
+                    // Step1: 追加報酬数の判定
+                    int addCount = 0;
+                    for (int j = 0; j < 4; j++) {
+                        rng.ascend();
+                        if (rng.w % 32 < 22) {
+                            addCount++;
+                        } else {
+                            break; // breakOnFail=true（仮定）
+                        }
+                    }
+
+                    boolean match = false;
+                    String[] rewards = null;
+                    if (addCount == expectedAdditional) {
+                        // RNG状態を復元して再実行
+                        rng.x = sx; rng.y = sy; rng.z = sz; rng.w = sw;
+                        // 追加報酬判定を再消費
+                        for (int j = 0; j < 4; j++) {
+                            rng.ascend();
+                            if (rng.w % 32 < 22) {
+                                // continue
+                            } else {
+                                break;
+                            }
+                        }
+                        // Step2: 報酬内容チェック（通常報酬 + 追加報酬）
+                        match = true;
+                        rewards = new String[totalCount];
+                        for (int j = 0; j < totalCount; j++) {
+                            rng.ascend();
+                            int itemVal = (int)((rng.w & 0xFFFF) % 100);
+                            rewards[j] = rewardFromValue(itemVal);
+                            if (!rewards[j].equals(targetItems[j])) {
+                                match = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (match) {
+                        allResults.add(new RewardSearchResult(currentFrame, rewards));
+                    }
+
+                    // RNG状態を復元して1フレーム分だけ進める
+                    rng.x = sx; rng.y = sy; rng.z = sz; rng.w = sw;
+                    rng.ascend();
+
+                    int done = globalDone.incrementAndGet();
+                    if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
+                }
+            }));
+        }
+
+        for (Future<?> f : futures) {
+            try { f.get(); } catch (Exception ignored) {}
+        }
+        exec.shutdown();
+        if (pcb != null) pcb.onProgress(maxFrames, maxFrames);
+        allResults.sort((a, b) -> Long.compare(a.frame(), b.frame()));
+        return allResults;
+    }
+
+    // ================================================================
     // Famous Charms
     // ================================================================
     static final Object[][] FAMOUS_CHARMS = {
@@ -711,6 +541,26 @@ public class MHXXCharmApp extends JFrame {
     JTextField arduinoTarget, arduinoC, arduinoFc;
     JButton arduinoCalcBtn;
 
+    // Reward Reverse tab (報酬逆算)
+    JComboBox<String> rewardTotalCount, rewardNormalCount;
+    JComboBox<String>[] rewardItems;
+    JLabel[] rewardLabels;
+    JTextField rewardSearchRange;
+    DefaultTableModel rewardModel;
+    JTable rewardTable;
+    JLabel rewardCalcResult;
+
+    // Appraise Timer (鑑定タイマー、報酬逆算タブ内)
+    JTextField appraiseTargetFrame, appraiseBaseFrame;
+    JLabel appraiseRewardEndLabel, appraiseTargetTimeLabel;
+    JLabel appraiseElapsedLabel, appraiseRemainLabel, appraiseStatusLabel;
+    JButton appraiseStartBtn, appraiseStopBtn, appraiseResetBtn;
+    javax.swing.Timer appraiseSwingTimer;
+    long appraiseStartMs = 0;
+    boolean appraiseRunning = false;
+    double appraiseTargetSec = 0; // 目標時刻（秒）
+    boolean appraiseBlink = false; // 目標到達後の点滅フラグ
+
     // ================================================================
     // Constructor
     // ================================================================
@@ -747,6 +597,7 @@ public class MHXXCharmApp extends JFrame {
         tabs.setFont(FONT_UI_BOLD);
         tabs.addTab(" お守り検索", buildSearchTab());
         tabs.addTab(" 周辺表示", buildAroundTab());
+        tabs.addTab(" 報酬逆算", buildRewardReverseTab());
         tabs.addTab(" 錬金シミュ", buildMeldingTab());
         tabs.addTab(" タイマー", buildTimerTab());
         tabs.addTab(" Arduino", buildArduinoTab());
@@ -1684,6 +1535,429 @@ public class MHXXCharmApp extends JFrame {
     }
 
     // ================================================================
+    // Reward Reverse Tab (報酬逆算)
+    // ================================================================
+    @SuppressWarnings("unchecked")
+    JPanel buildRewardReverseTab() {
+        JPanel tab = new JPanel(new BorderLayout(8,8));
+        tab.setBackground(BG);
+        tab.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
+
+        JPanel settings = titled("クエスト報酬からフレーム逆算");
+        settings.setLayout(new BoxLayout(settings, BoxLayout.Y_AXIS));
+
+        // 説明
+        JPanel descRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        descRow.setOpaque(false);
+        JLabel desc = new JLabel(
+            "<html>クエスト報酬画面に表示されたアイテムの合計個数と並びを入力し、現在フレームを特定します。<br>" +
+            "通常報酬枠数は実機で確認して設定してください（不明なら0で試行）。</html>");
+        desc.setFont(FONT_SMALL);
+        desc.setForeground(DIM);
+        descRow.add(desc);
+        settings.add(descRow);
+
+        // Row 1: 通常報酬枠数 + 合計報酬個数
+        JPanel r1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r1.setOpaque(false);
+        r1.add(label("通常報酬枠数:"));
+        rewardNormalCount = makeCombo(new String[]{"0","1","2","3","4","5","6"});
+        rewardNormalCount.setToolTipText("通常報酬の固定枠数（実機確認で確定、不明なら0）");
+        r1.add(rewardNormalCount);
+        r1.add(label("   報酬合計個数:"));
+        rewardTotalCount = makeCombo(new String[]{"1","2","3","4","5","6","7","8","9","10"});
+        rewardTotalCount.setToolTipText("報酬画面に表示されたアイテムの合計個数（通常＋追加）");
+        r1.add(rewardTotalCount);
+        settings.add(r1);
+
+        // Row 2: アイテム選択（最大10枠分）
+        JPanel r2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r2.setOpaque(false);
+        rewardItems = new JComboBox[10];
+        rewardLabels = new JLabel[10];
+        for (int i = 0; i < 10; i++) {
+            rewardLabels[i] = label((i + 1) + ":");
+            r2.add(rewardLabels[i]);
+            rewardItems[i] = makeCombo(REWARD_ITEMS);
+            r2.add(rewardItems[i]);
+        }
+        settings.add(r2);
+
+        // 個数変更時にコンボボックスの表示/非表示を切り替え
+        Runnable updateRewardVisibility = () -> {
+            int total = Integer.parseInt((String)rewardTotalCount.getSelectedItem());
+            for (int i = 0; i < 10; i++) {
+                boolean visible = i < total;
+                rewardLabels[i].setVisible(visible);
+                rewardItems[i].setVisible(visible);
+            }
+            r2.revalidate();
+            r2.repaint();
+        };
+        rewardTotalCount.addActionListener(e -> updateRewardVisibility.run());
+        // 初期状態（1個）
+        updateRewardVisibility.run();
+
+        // Row 3: 検索範囲・ボタン
+        JPanel r3 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r3.setOpaque(false);
+        r3.add(label("検索範囲:"));
+        rewardSearchRange = makeField("10000000", 12);
+        rewardSearchRange.setToolTipText("検索するフレーム数");
+        r3.add(rewardSearchRange);
+        r3.add(label("フレーム"));
+        JButton searchBtn = makeButton("▶ 逆算開始", ACCENT);
+        searchBtn.addActionListener(e -> startRewardSearch());
+        r3.add(searchBtn);
+        JButton cancelBtn = makeButton("■ 中止", BTN_BG);
+        cancelBtn.addActionListener(e -> { cancelFlag.set(true); statusLabel.setText("逆算を中止しました"); });
+        r3.add(cancelBtn);
+        settings.add(r3);
+
+        // Row 4: 結果サマリ
+        JPanel r4 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r4.setOpaque(false);
+        rewardCalcResult = new JLabel("");
+        rewardCalcResult.setFont(FONT_LARGE);
+        rewardCalcResult.setForeground(SUCCESS);
+        r4.add(rewardCalcResult);
+        settings.add(r4);
+
+        tab.add(settings, BorderLayout.NORTH);
+
+        // 結果テーブル
+        rewardModel = new DefaultTableModel(
+                new String[]{"フレーム","報酬(通常+追加)","追加枠数","待ち時間","→鑑定お守り(クエスト産)"}, 0);
+        rewardTable = makeTable(rewardModel);
+        rewardTable.setToolTipText("ダブルクリックで周辺表示 / 右クリックでArduinoコード生成");
+        rewardTable.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    int row = rewardTable.getSelectedRow();
+                    if (row >= 0) {
+                        int modelRow = rewardTable.convertRowIndexToModel(row);
+                        Object val = rewardModel.getValueAt(modelRow, 0);
+                        aroundFrame.setText(val.toString());
+                        aroundOrigin.setSelectedIndex(1); // クエスト産
+                        tabs.setSelectedIndex(1);
+                        showAround();
+                    }
+                }
+            }
+        });
+        addArduinoContextMenu(rewardTable, rewardModel, 0);
+
+        // 行選択時に基準フレームを自動セット
+        rewardTable.getSelectionModel().addListSelectionListener(e -> {
+            if (e.getValueIsAdjusting()) return;
+            int row = rewardTable.getSelectedRow();
+            if (row < 0) return;
+            int modelRow = rewardTable.convertRowIndexToModel(row);
+            Object val = rewardModel.getValueAt(modelRow, 0);
+            if (val != null) {
+                appraiseBaseFrame.setText(val.toString());
+                updateAppraiseCalc();
+            }
+        });
+
+        JScrollPane sp = new JScrollPane(rewardTable);
+        setupScrollSpeed(sp);
+        sp.getViewport().setBackground(BG2);
+        JPanel rp = titled("候補フレーム（報酬パターンが一致するフレーム）");
+        rp.setLayout(new BorderLayout());
+        rp.add(sp, BorderLayout.CENTER);
+
+        // 鑑定タイマー（結果テーブル下に配置）
+        JPanel appraisePanel = buildAppraiseTimerPanel();
+
+        // CENTERに結果テーブル、SOUTHに鑑定タイマー
+        JPanel centerSouth = new JPanel(new BorderLayout(0, 8));
+        centerSouth.setOpaque(false);
+        centerSouth.add(rp, BorderLayout.CENTER);
+        centerSouth.add(appraisePanel, BorderLayout.SOUTH);
+        tab.add(centerSouth, BorderLayout.CENTER);
+
+        return tab;
+    }
+
+    /** 鑑定タイマーパネル（報酬逆算タブ内のSOUTHに配置） */
+    JPanel buildAppraiseTimerPanel() {
+        JPanel panel = titled("鑑定タイマー");
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+
+        // Row 1: フレーム入力
+        JPanel r1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r1.setOpaque(false);
+        r1.add(label("目標フレーム:"));
+        appraiseTargetFrame = makeField("", 12);
+        appraiseTargetFrame.setToolTipText("欲しいお守りのフレーム番号");
+        r1.add(appraiseTargetFrame);
+        r1.add(label("基準フレーム:"));
+        appraiseBaseFrame = makeField("", 12);
+        appraiseBaseFrame.setToolTipText("報酬逆算結果から選択した候補フレーム（行選択で自動セット）");
+        r1.add(appraiseBaseFrame);
+        JButton calcBtn = makeButton("計算", BTN_BG);
+        calcBtn.addActionListener(e -> updateAppraiseCalc());
+        r1.add(calcBtn);
+        panel.add(r1);
+
+        appraiseTargetFrame.addActionListener(e -> updateAppraiseCalc());
+        appraiseBaseFrame.addActionListener(e -> updateAppraiseCalc());
+
+        // Row 2: 計算結果
+        JPanel r2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r2.setOpaque(false);
+        r2.add(label("報酬生成終了:"));
+        appraiseRewardEndLabel = new JLabel("-");
+        appraiseRewardEndLabel.setFont(FONT_LARGE);
+        appraiseRewardEndLabel.setForeground(FG);
+        r2.add(appraiseRewardEndLabel);
+        r2.add(Box.createHorizontalStrut(20));
+        r2.add(label("目標時刻:"));
+        appraiseTargetTimeLabel = new JLabel("-");
+        appraiseTargetTimeLabel.setFont(FONT_LARGE);
+        appraiseTargetTimeLabel.setForeground(WARN);
+        r2.add(appraiseTargetTimeLabel);
+        panel.add(r2);
+
+        // Row 3: 大きな時刻表示
+        JPanel r3 = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 4));
+        r3.setOpaque(false);
+        appraiseElapsedLabel = new JLabel("0:00.00");
+        appraiseElapsedLabel.setFont(new Font(FONT_MONO.getFamily(), Font.BOLD, 56));
+        appraiseElapsedLabel.setForeground(FG);
+        r3.add(appraiseElapsedLabel);
+        panel.add(r3);
+
+        // Row 4: 状態ラベル + 残り時間
+        JPanel r4 = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 4));
+        r4.setOpaque(false);
+        appraiseStatusLabel = new JLabel("停止中");
+        appraiseStatusLabel.setFont(FONT_LARGE);
+        appraiseStatusLabel.setForeground(DIM);
+        r4.add(appraiseStatusLabel);
+        appraiseRemainLabel = new JLabel("");
+        appraiseRemainLabel.setFont(FONT_LARGE);
+        appraiseRemainLabel.setForeground(DIM);
+        r4.add(appraiseRemainLabel);
+        panel.add(r4);
+
+        // Row 5: ボタン
+        JPanel r5 = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 4));
+        r5.setOpaque(false);
+        appraiseStartBtn = makeButton("▶ 起動 [Space]", GREEN);
+        appraiseStartBtn.setToolTipText("報酬画面が表示された瞬間に押す");
+        appraiseStartBtn.addActionListener(e -> appraiseStart());
+        r5.add(appraiseStartBtn);
+        appraiseStopBtn = makeButton("■ 停止", ACCENT);
+        appraiseStopBtn.setEnabled(false);
+        appraiseStopBtn.addActionListener(e -> appraiseStop());
+        r5.add(appraiseStopBtn);
+        appraiseResetBtn = makeButton("↻ リセット", BTN_BG);
+        appraiseResetBtn.addActionListener(e -> appraiseReset());
+        r5.add(appraiseResetBtn);
+        panel.add(r5);
+
+        // Swing Timer（33ms間隔で更新）
+        appraiseSwingTimer = new javax.swing.Timer(33, e -> updateAppraiseDisplay());
+
+        return panel;
+    }
+
+    /** 目標フレーム・基準フレームから計算を更新 */
+    void updateAppraiseCalc() {
+        try {
+            long target = Long.parseLong(appraiseTargetFrame.getText().trim());
+            long base = Long.parseLong(appraiseBaseFrame.getText().trim());
+
+            // 報酬生成終了フレーム = base + addJudge + totalCount
+            int totalCount = Integer.parseInt((String)rewardTotalCount.getSelectedItem());
+            int normalCount = Integer.parseInt((String)rewardNormalCount.getSelectedItem());
+            int additionalExpected = totalCount - normalCount;
+            int addJudge = (additionalExpected < 4) ? additionalExpected + 1 : 4;
+            long rewardEnd = base + addJudge + totalCount;
+
+            appraiseRewardEndLabel.setText(String.valueOf(rewardEnd));
+
+            long waitFrames = target - rewardEnd;
+            if (waitFrames < 0) {
+                appraiseTargetTimeLabel.setText("目標が過去のフレーム（設定NG）");
+                appraiseTargetTimeLabel.setForeground(ACCENT_T);
+                appraiseTargetSec = -1;
+                return;
+            }
+            appraiseTargetSec = waitFrames / 30.0;
+            appraiseTargetTimeLabel.setText(String.format("%s  (%.2f秒 / %d F)",
+                formatElapsed(appraiseTargetSec), appraiseTargetSec, waitFrames));
+            appraiseTargetTimeLabel.setForeground(WARN);
+        } catch (NumberFormatException ex) {
+            appraiseRewardEndLabel.setText("-");
+            appraiseTargetTimeLabel.setText("数値を入力してください");
+            appraiseTargetTimeLabel.setForeground(DIM);
+            appraiseTargetSec = 0;
+        }
+    }
+
+    /** 鑑定タイマー開始 */
+    void appraiseStart() {
+        if (appraiseTargetSec <= 0) {
+            JOptionPane.showMessageDialog(this,
+                "先に目標フレーム・基準フレームを正しく設定してください。",
+                "エラー", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        appraiseStartMs = System.currentTimeMillis();
+        appraiseRunning = true;
+        appraiseBlink = false;
+        appraiseSwingTimer.start();
+        appraiseStartBtn.setEnabled(false);
+        appraiseStopBtn.setEnabled(true);
+        appraiseStatusLabel.setText("カウントアップ中…");
+        appraiseStatusLabel.setForeground(SUCCESS);
+    }
+
+    void appraiseStop() {
+        appraiseRunning = false;
+        appraiseSwingTimer.stop();
+        appraiseStartBtn.setEnabled(true);
+        appraiseStopBtn.setEnabled(false);
+        appraiseStatusLabel.setText("停止");
+        appraiseStatusLabel.setForeground(DIM);
+    }
+
+    void appraiseReset() {
+        appraiseStop();
+        appraiseElapsedLabel.setText("0:00.00");
+        appraiseElapsedLabel.setForeground(FG);
+        appraiseRemainLabel.setText("");
+        appraiseStatusLabel.setText("停止中");
+        appraiseStatusLabel.setForeground(DIM);
+    }
+
+    /** 33ms毎に呼ばれて表示を更新 */
+    void updateAppraiseDisplay() {
+        if (!appraiseRunning) return;
+        double elapsed = (System.currentTimeMillis() - appraiseStartMs) / 1000.0;
+        appraiseElapsedLabel.setText(formatElapsed(elapsed));
+
+        double remain = appraiseTargetSec - elapsed;
+        if (remain > 0) {
+            appraiseRemainLabel.setText(String.format("残り %.2f秒", remain));
+            appraiseRemainLabel.setForeground(DIM);
+
+            // 目標時刻3秒前から色を警告色に
+            if (remain < 3.0) {
+                appraiseElapsedLabel.setForeground(WARN);
+            } else {
+                appraiseElapsedLabel.setForeground(FG);
+            }
+        } else {
+            // 目標時刻到達・超過
+            appraiseRemainLabel.setText(String.format("+%.2f秒 超過", -remain));
+            appraiseRemainLabel.setForeground(ACCENT_T);
+            appraiseStatusLabel.setText("▶▶▶ 今鑑定！ ◀◀◀");
+            appraiseStatusLabel.setForeground(ACCENT_T);
+
+            // 点滅表示（500ms周期）
+            appraiseBlink = ((System.currentTimeMillis() / 250) % 2 == 0);
+            appraiseElapsedLabel.setForeground(appraiseBlink ? ACCENT_T : WARN);
+        }
+    }
+
+    /** 秒数を "M:SS.ss" 形式にフォーマット */
+    static String formatElapsed(double seconds) {
+        int m = (int)(seconds / 60);
+        double s = seconds - m * 60;
+        return String.format("%d:%05.2f", m, s);
+    }
+
+    void startRewardSearch() {
+        cancelFlag.set(false);
+        rewardModel.setRowCount(0);
+
+        int totalCount, normalCount, maxF;
+        try {
+            totalCount = Integer.parseInt((String)rewardTotalCount.getSelectedItem());
+            normalCount = Integer.parseInt((String)rewardNormalCount.getSelectedItem());
+            maxF = Integer.parseInt(rewardSearchRange.getText().trim());
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "数値を正しく入力してください", "エラー", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        int additionalExpected = totalCount - normalCount;
+        if (additionalExpected < 0 || additionalExpected > 4) {
+            JOptionPane.showMessageDialog(this,
+                "追加報酬枠数（合計 - 通常）が0〜4の範囲になるように設定してください。\n" +
+                "現在: 合計" + totalCount + " - 通常" + normalCount + " = " + additionalExpected,
+                "エラー", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        String[] targetItems = new String[totalCount];
+        for (int i = 0; i < totalCount; i++) {
+            targetItems[i] = (String)rewardItems[i].getSelectedItem();
+        }
+
+        CharmData d = new CharmData();
+        d.setBlue(); // 風化したお守り
+
+        final int fNormalCount = normalCount;
+
+        statusLabel.setText("報酬逆算中...");
+        progressBar.setValue(0);
+        progressBar.setVisible(true);
+
+        Thread.ofVirtual().start(() -> {
+            long t0 = System.currentTimeMillis();
+            List<RewardSearchResult> results = reverseSearchRewards(
+                    totalCount, fNormalCount, targetItems, maxF,
+                    null,
+                    (done, total) -> SwingUtilities.invokeLater(() -> {
+                        int pct = (int)((long)done * 100 / total);
+                        progressBar.setValue(pct);
+                        statusLabel.setText(String.format("報酬逆算中... %d%%", pct));
+                    }),
+                    cancelFlag);
+
+            SwingUtilities.invokeLater(() -> {
+                for (RewardSearchResult rsr : results) {
+                    // 報酬消費後のフレーム:
+                    // 追加報酬判定消費 + 通常報酬内容消費 + 追加報酬内容消費
+                    int addJudge = (additionalExpected < 4) ? additionalExpected + 1 : 4;
+                    long charmFrame = rsr.frame + addJudge + totalCount;
+
+                    RNG charmRng = new RNG();
+                    charmRng.jump(charmFrame);
+                    for (int j = 0; j < 7; j++) charmRng.roll();
+                    Charm charm = getCharm(charmRng, d, 1);
+
+                    String rewardStr = String.join(", ", rsr.rewards);
+                    String charmStr = charm.s1Name() + charm.sp1()
+                        + (charm.s2Name() != null ? " " + charm.s2Name() + charm.sp2() : "")
+                        + " s" + charm.slot();
+
+                    rewardModel.addRow(new Object[]{
+                        rsr.frame, rewardStr, additionalExpected,
+                        framesToTime(rsr.frame), charmStr
+                    });
+                }
+
+                double elapsed = (System.currentTimeMillis() - t0) / 1000.0;
+                progressBar.setVisible(false);
+                statusLabel.setText(String.format("報酬逆算完了: %d件 (%.2f秒)", results.size(), elapsed));
+                if (results.isEmpty()) {
+                    rewardCalcResult.setText("候補なし — 報酬テーブルや個数が正しいか確認してください");
+                    rewardCalcResult.setForeground(WARN);
+                } else {
+                    rewardCalcResult.setText(results.size() + "件の候補フレームが見つかりました");
+                    rewardCalcResult.setForeground(SUCCESS);
+                }
+            });
+        });
+    }
+
+    // ================================================================
     // Melding Tab
     // ================================================================
     JPanel buildMeldingTab() {
@@ -1905,13 +2179,24 @@ public class MHXXCharmApp extends JFrame {
     void updateTimerKeyBindings() {
         InputMap im = getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
         ActionMap am = getRootPane().getActionMap();
-        boolean isTimerTab = tabs.getSelectedIndex() == 3; // タイマータブ
+        int tabIdx = tabs.getSelectedIndex();
+        boolean isTimerTab = tabIdx == 4; // タイマータブ（新インデックス）
+        boolean isRewardTab = tabIdx == 2; // 報酬逆算タブ
+
+        // まず全部クリア
+        im.remove(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0));
+        im.remove(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0));
+        im.remove(KeyStroke.getKeyStroke(KeyEvent.VK_R, 0));
+        am.remove("timerSpace");
+        am.remove("timerEnter");
+        am.remove("timerR");
+        am.remove("appraiseSpace");
+        am.remove("appraiseR");
 
         if (isTimerTab) {
             im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "timerSpace");
             am.put("timerSpace", new AbstractAction() {
                 @Override public void actionPerformed(ActionEvent e) {
-                    // テキストフィールドにフォーカスがある場合はスキップ
                     Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
                     if (focused instanceof JTextField || focused instanceof JTextArea) return;
                     timerStartOrLap();
@@ -1933,13 +2218,25 @@ public class MHXXCharmApp extends JFrame {
                     timerReset();
                 }
             });
-        } else {
-            im.remove(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0));
-            im.remove(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0));
-            im.remove(KeyStroke.getKeyStroke(KeyEvent.VK_R, 0));
-            am.remove("timerSpace");
-            am.remove("timerEnter");
-            am.remove("timerR");
+        } else if (isRewardTab) {
+            im.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0), "appraiseSpace");
+            am.put("appraiseSpace", new AbstractAction() {
+                @Override public void actionPerformed(ActionEvent e) {
+                    Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+                    if (focused instanceof JTextField || focused instanceof JTextArea) return;
+                    // 実行中なら停止、停止中なら起動
+                    if (appraiseRunning) appraiseStop();
+                    else appraiseStart();
+                }
+            });
+            im.put(KeyStroke.getKeyStroke(KeyEvent.VK_R, 0), "appraiseR");
+            am.put("appraiseR", new AbstractAction() {
+                @Override public void actionPerformed(ActionEvent e) {
+                    Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+                    if (focused instanceof JTextField || focused instanceof JTextArea) return;
+                    appraiseReset();
+                }
+            });
         }
     }
 
@@ -2879,7 +3176,7 @@ public class MHXXCharmApp extends JFrame {
     /** 検索結果からArduinoタブへ連動: フレーム設定→自動計算→タブ切り替え */
     void generateArduinoForFrame(long frame) {
         arduinoTarget.setText(String.valueOf(frame));
-        tabs.setSelectedIndex(4); // Arduinoタブ
+        tabs.setSelectedIndex(5); // Arduinoタブ
         // 計算ボタンをプログラム的にクリック
         SwingUtilities.invokeLater(() -> arduinoCalcBtn.doClick());
     }

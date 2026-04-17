@@ -7,7 +7,7 @@ if %ERRORLEVEL% neq 0 (
 )
 if not exist build mkdir build
 echo Compiling...
-javac --release 21 -encoding UTF-8 -d build MHXXCharmApp.java
+javac --release 21 -encoding UTF-8 -d build src\*.java
 if %ERRORLEVEL% neq 0 (
     echo Compile failed.
     pause
