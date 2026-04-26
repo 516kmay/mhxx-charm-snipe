@@ -351,6 +351,7 @@ public class MHXXCharmApp extends JFrame {
      */
     static List<RewardSearchResult> reverseSearchRewards(
             int totalCount, int normalCount, String[] targetItems, int maxFrames,
+            int addRewardThreshold,
             SearchCallback cb, ProgressCallback pcb,
             java.util.concurrent.atomic.AtomicBoolean cancel) {
 
@@ -389,7 +390,7 @@ public class MHXXCharmApp extends JFrame {
                     int addCount = 0;
                     for (int j = 0; j < 4; j++) {
                         rng.ascend();
-                        if (rng.w % 32 < 22) {
+                        if (rng.w % 32 < addRewardThreshold) {
                             addCount++;
                         } else {
                             break; // breakOnFail=true（仮定）
@@ -404,7 +405,7 @@ public class MHXXCharmApp extends JFrame {
                         // 追加報酬判定を再消費
                         for (int j = 0; j < 4; j++) {
                             rng.ascend();
-                            if (rng.w % 32 < 22) {
+                            if (rng.w % 32 < addRewardThreshold) {
                                 // continue
                             } else {
                                 break;
@@ -546,6 +547,7 @@ public class MHXXCharmApp extends JFrame {
     JComboBox<String>[] rewardItems;
     JLabel[] rewardLabels;
     JTextField rewardSearchRange;
+    JTextField rewardThreshold;  // 追加報酬閾値（通常22、激運/幸運で変動）
     DefaultTableModel rewardModel;
     JTable rewardTable;
     JLabel rewardCalcResult;
@@ -598,9 +600,12 @@ public class MHXXCharmApp extends JFrame {
         tabs.addTab(" お守り検索", buildSearchTab());
         tabs.addTab(" 周辺表示", buildAroundTab());
         tabs.addTab(" 報酬逆算", buildRewardReverseTab());
+        tabs.addTab(" 調合スナイプ", buildComboSnipeTab());
+        tabs.addTab(" 調合Arduino", buildComboArduinoTab());
         tabs.addTab(" 錬金シミュ", buildMeldingTab());
         tabs.addTab(" タイマー", buildTimerTab());
         tabs.addTab(" Arduino", buildArduinoTab());
+        tabs.addTab(" クエスト周回", buildQuestLoopTab());
         tabs.addTab(" キャリブレーション", buildCalibrationTab());
         tabs.addTab(" 有名お守り", buildFamousTab());
         add(tabs, BorderLayout.CENTER);
@@ -702,7 +707,7 @@ public class MHXXCharmApp extends JFrame {
             safeSetIndex(searchSlot, props.getProperty("search.slot", "3"));
             searchRange.setText(props.getProperty("search.range", "100000"));
             safeSetIndex(aroundOrigin, props.getProperty("around.origin", "0"));
-            aroundRadius.setText(props.getProperty("around.radius", "100"));
+            aroundRadius.setText(props.getProperty("around.radius", "10"));
             safeSetIndex(meldType, props.getProperty("meld.type", "0"));
             safeSetIndex(meldRank, props.getProperty("meld.rank", "0"));
             safeSetIndex(tabs, props.getProperty("tab.selected", "0"));
@@ -1444,7 +1449,7 @@ public class MHXXCharmApp extends JFrame {
         aroundFrame.addActionListener(e -> showAround());
         settings.add(aroundFrame);
         settings.add(label("前後範囲:"));
-        aroundRadius = makeField("30", 6);
+        aroundRadius = makeField("10", 6);
         aroundRadius.addActionListener(e -> showAround());
         settings.add(aroundRadius);
         settings.add(label("原産地:"));
@@ -1606,6 +1611,12 @@ public class MHXXCharmApp extends JFrame {
         rewardSearchRange.setToolTipText("検索するフレーム数");
         r3.add(rewardSearchRange);
         r3.add(label("フレーム"));
+        r3.add(label("  追加報酬閾値:"));
+        rewardThreshold = makeField("22", 4);
+        rewardThreshold.setToolTipText(
+            "<html>追加報酬判定: rng%32 &lt; 閾値 で追加報酬+1。<br>" +
+            "通常=22 / 激運・幸運時は変動（具体値は実機検証が必要）</html>");
+        r3.add(rewardThreshold);
         JButton searchBtn = makeButton("▶ 逆算開始", ACCENT);
         searchBtn.addActionListener(e -> startRewardSearch());
         r3.add(searchBtn);
@@ -1876,10 +1887,12 @@ public class MHXXCharmApp extends JFrame {
         rewardModel.setRowCount(0);
 
         int totalCount, normalCount, maxF;
+        int threshold;
         try {
             totalCount = Integer.parseInt((String)rewardTotalCount.getSelectedItem());
             normalCount = Integer.parseInt((String)rewardNormalCount.getSelectedItem());
             maxF = Integer.parseInt(rewardSearchRange.getText().trim());
+            threshold = Integer.parseInt(rewardThreshold.getText().trim());
         } catch (NumberFormatException ex) {
             JOptionPane.showMessageDialog(this, "数値を正しく入力してください", "エラー", JOptionPane.ERROR_MESSAGE);
             return;
@@ -1903,6 +1916,7 @@ public class MHXXCharmApp extends JFrame {
         d.setBlue(); // 風化したお守り
 
         final int fNormalCount = normalCount;
+        final int fThreshold = threshold;
 
         statusLabel.setText("報酬逆算中...");
         progressBar.setValue(0);
@@ -1912,7 +1926,7 @@ public class MHXXCharmApp extends JFrame {
             long t0 = System.currentTimeMillis();
             List<RewardSearchResult> results = reverseSearchRewards(
                     totalCount, fNormalCount, targetItems, maxF,
-                    null,
+                    fThreshold, null,
                     (done, total) -> SwingUtilities.invokeLater(() -> {
                         int pct = (int)((long)done * 100 / total);
                         progressBar.setValue(pct);
@@ -2434,16 +2448,16 @@ public class MHXXCharmApp extends JFrame {
         JPanel r1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         r1.setOpaque(false);
         r1.add(label("目標フレーム:"));
-        arduinoTarget = makeField("296260", 12);
+        arduinoTarget = makeField("", 12);
         arduinoTarget.setToolTipText("検索結果で見つけたお守りのフレーム番号（右クリックから自動入力も可）");
         r1.add(arduinoTarget);
         r1.add(label("基本消費フレーム:"));
-        arduinoC = makeField("1710", 8);
+        arduinoC = makeField("1675", 8);
         arduinoC.setToolTipText(
             "<html>ゲーム起動からマカ錬金確定までに固定で消費されるフレーム数。<br>" +
             "環境(3DS/Switch)やロード速度で変わるため、<br>" +
             "下のキャリブレーション機能で実測するのがおすすめ。<br>" +
-            "デフォルト 2351 は参考値です。</html>");
+            "デフォルト 1675 は実測値（Anemos環境）です。</html>");
         r1.add(arduinoC);
         inputPanel.add(r1);
 
@@ -2451,11 +2465,11 @@ public class MHXXCharmApp extends JFrame {
         JPanel r2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         r2.setOpaque(false);
         r2.add(label("Continue1回の消費フレーム:"));
-        arduinoFc = makeField("714", 6);
+        arduinoFc = makeField("716", 6);
         arduinoFc.setToolTipText(
             "<html>タイトル画面でContinue→キャンセルを1回行った時の消費フレーム数。<br>" +
             "環境により異なるため、キャリブレーションで実測するのがおすすめ。<br>" +
-            "デフォルト 714 は参考値です。</html>");
+            "デフォルト 716 は実測値（Anemos環境）です。</html>");
         r2.add(arduinoFc);
         r2.add(label("  待機時間の範囲:"));
         JTextField arduinoT2min = makeField("5000", 8);
@@ -2852,8 +2866,8 @@ public class MHXXCharmApp extends JFrame {
                 """.formatted(numContinue, waitMs);
 
         var continueBlock = numContinue > 0 ? """
-                    // 事前待機 (30秒)
-                    waitWithKeepAlive(30000);
+                    // 事前待機 (10秒)
+                    waitWithKeepAlive(10000);
 
                     // Continue A→Bキャンセル (%d回)
                     for (unsigned long i = 0; i < %d; i++){
@@ -2966,6 +2980,287 @@ public class MHXXCharmApp extends JFrame {
                 """.formatted(waitMs, waitMs);
 
         return header + continueBlock + tail;
+    }
+
+    // ================================================================
+    // 調合スナイプ用2コード方式のArduinoスケッチ生成
+    //
+    // コード1: Continue連打→ゲーム開始→自宅で調合→30秒録画→HOME
+    // コード2: HOME復帰→待機→ルームサービス経由マカ錬金→ケルビ→鑑定
+    // ================================================================
+
+    /**
+     * 調合スナイプ用コード1を生成。
+     * Continue連打でフレームを大量消費した後、ゲーム開始→自宅で調合→録画→HOME。
+     * @param numContinue Continue連打回数
+     * @param numCombo 調合回数（Lv2通常弾を何個作るか。50個程度推奨）
+     */
+    static String generateComboCode1(int numContinue, int downKeysToLv2) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("// ================================================================\n");
+        sb.append("// MHXX 調合スナイプ - コード1 (フレーム消費 + 調合 + 録画)\n");
+        sb.append("// ================================================================\n");
+        sb.append("// 実行前提:\n");
+        sb.append("//   - ココット村でセーブ済み（自宅にいる状態でセーブ）\n");
+        sb.append("//   - ハリの実×16以上, カラの実×16以上, 調合書①入門編を所持\n");
+        sb.append("//   - オトモなし\n");
+        sb.append("//   - Switchのアルバムに空きがあること（30秒録画用）\n");
+        sb.append("//\n");
+        sb.append("// 動作:\n");
+        sb.append("//   1. ゲーム起動 → A連打 → ゲームモード選択画面\n");
+        sb.append("//   2. Continue連打で乱数を大量消費\n");
+        sb.append("//   3. Continue決定 → ロード（自宅から再開）\n");
+        sb.append("//   4. +ボタンでメニュー → 上から3番目「リストから調合」 → アイテムリスト画面\n");
+        sb.append("//   5. ↓キーでLv2通常弾までカーソル移動 → A決定で調合確認画面\n");
+        sb.append("//   6. A長押しで連続調合\n");
+        sb.append("//   7. 30秒録画（キャプチャーボタン長押し）\n");
+        sb.append("//   8. HOMEボタンでゲーム中断\n");
+        sb.append("//\n");
+        sb.append("// ここでArduinoを外し、録画を確認して累積弾数をツールに入力。\n");
+        sb.append("// 現在フレームを特定後、コード2のwait_msを設定して書き込む。\n");
+        sb.append("// ================================================================\n");
+        sb.append("#include <NintendoSwitchControlLibrary.h>\n\n");
+
+        // waitWithKeepAlive関数
+        sb.append("void waitWithKeepAlive(unsigned long total_ms,\n");
+        sb.append("                       uint16_t button = Button::X,\n");
+        sb.append("                       unsigned long interval_ms = 5000,\n");
+        sb.append("                       unsigned long press_ms = 100)\n");
+        sb.append("{\n");
+        sb.append("    if (total_ms <= 10000) { delay(total_ms); return; }\n");
+        sb.append("    unsigned long cycle = interval_ms;\n");
+        sb.append("    unsigned long n = total_ms / cycle;\n");
+        sb.append("    unsigned long rem = total_ms % cycle;\n");
+        sb.append("    for (unsigned long i = 0; i < n; i++) {\n");
+        sb.append("        SwitchControlLibrary().pressButton(button);\n");
+        sb.append("        SwitchControlLibrary().sendReport();\n");
+        sb.append("        delay(press_ms);\n");
+        sb.append("        SwitchControlLibrary().releaseButton(button);\n");
+        sb.append("        SwitchControlLibrary().sendReport();\n");
+        sb.append("        delay(interval_ms - press_ms);\n");
+        sb.append("    }\n");
+        sb.append("    if (rem > 0) { delay(rem); }\n");
+        sb.append("}\n\n");
+
+        sb.append("void setup() {\n");
+        sb.append("    delay(50);\n\n");
+
+        // Step 1: ゲーム起動
+        sb.append("    // Step 1: MHXX起動 → ゲームモード選択画面までA連打\n");
+        sb.append("    pushButton(Button::A, 255, 32);\n\n");
+
+        // Step 2: Continue連打
+        if (numContinue > 0) {
+            sb.append("    // Step 2: 事前待機 + Continue連打 (").append(numContinue).append("回)\n");
+            sb.append("    waitWithKeepAlive(10000); // 事前待機10秒\n");
+            sb.append("    for (unsigned long i = 0; i < ").append(numContinue).append("; i++) {\n");
+            sb.append("        SwitchControlLibrary().pressButton(Button::A);\n");
+            sb.append("        SwitchControlLibrary().sendReport();\n");
+            sb.append("        delay(100);\n");
+            sb.append("        SwitchControlLibrary().releaseButton(Button::A);\n");
+            sb.append("        SwitchControlLibrary().sendReport();\n");
+            sb.append("        delay(100);\n");
+            sb.append("        SwitchControlLibrary().pressButton(Button::B);\n");
+            sb.append("        SwitchControlLibrary().sendReport();\n");
+            sb.append("        delay(100);\n");
+            sb.append("        SwitchControlLibrary().releaseButton(Button::B);\n");
+            sb.append("        SwitchControlLibrary().sendReport();\n");
+            sb.append("        delay(100);\n");
+            sb.append("    }\n\n");
+        }
+
+        // Step 3: Continue決定 → ロード
+        sb.append("    // Step 3: Continue決定 → ロード\n");
+        sb.append("    pushButton(Button::A, 250, 4);\n");
+        sb.append("    delay(9500);\n\n");
+
+        // Step 4: +ボタンメニューから「リストから調合」を選択 → アイテムリスト画面
+        sb.append("    // Step 4: +ボタンでメニューを開く → 「リストから調合」を選択\n");
+        sb.append("    //   メニュー上から3番目が「リストから調合」\n");
+        sb.append("    pushButton(Button::PLUS, 500);    // メニューを開く\n");
+        sb.append("    pushHat(Hat::DOWN, 100, 2);       // 上から3番目に移動\n");
+        sb.append("    pushButton(Button::A, 500);       // 「リストから調合」を選択\n");
+        sb.append("    delay(1500);                      // アイテムリスト画面のロード待ち\n\n");
+
+        // Step 5: アイテムリストでLv2通常弾までカーソル移動 → 決定で調合確認画面
+        sb.append("    // Step 5: アイテムリストでLv2通常弾を選択 → 調合確認画面\n");
+        sb.append("    //   実機でLv2通常弾までの↓キー回数を調整すること（現在: ")
+                .append(downKeysToLv2).append("回）\n");
+        if (downKeysToLv2 > 0) {
+            sb.append("    pushHat(Hat::DOWN, 100, ").append(downKeysToLv2)
+                    .append(");  // Lv2通常弾までカーソル移動\n");
+        } else {
+            sb.append("    // Lv2通常弾は先頭にあるためカーソル移動なし\n");
+        }
+        sb.append("    pushButton(Button::A, 1000);      // Aで決定 → 調合確認画面\n\n");
+
+        // Step 6: A長押しで連続調合（10秒間）
+        sb.append("    // Step 6: A長押しで連続調合（10秒間）\n");
+        sb.append("    // 重要: A長押しで連続調合する（A連打ではゲーム側で連続発動しないため）\n");
+        sb.append("    // 10秒間で実機の調合速度に応じて5〜6回程度調合される想定\n");
+        sb.append("    holdButton(Button::A, 10000);\n");
+        sb.append("    pushButton(Button::B, 250, 3);   // 調合メニューを閉じる\n\n");
+
+        // Step 7: 30秒録画
+        sb.append("    // Step 7: 30秒録画（キャプチャーボタン長押し）\n");
+        sb.append("    holdButton(Button::CAPTURE, 1500);\n");
+        sb.append("    delay(3000); // 録画保存待ち\n\n");
+
+        // Step 8: HOMEボタンでゲーム中断
+        sb.append("    // Step 8: HOMEボタンでゲーム中断\n");
+        sb.append("    pushButton(Button::HOME, 500);\n");
+        sb.append("    // ここでArduinoを外す。録画確認→コード2へ。\n");
+        sb.append("}\n\n");
+        sb.append("void loop() {}\n");
+
+        return sb.toString();
+    }
+
+    /**
+     * 調合スナイプ用コード2を生成。
+     * HOME復帰→待機→ルームサービス経由でマカ錬金→ケルビマラソン→鑑定。
+     * @param waitMs 調合開始フレームから目標フレームまでの待機時間(ms)
+     */
+    static String generateComboCode2(long waitMs) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("// ================================================================\n");
+        sb.append("// MHXX 調合スナイプ - コード2 (ゲーム復帰 + 待機 + マカ錬金)\n");
+        sb.append("// ================================================================\n");
+        sb.append("// 実行前提:\n");
+        sb.append("//   - コード1実行後、HOMEでゲーム中断した状態\n");
+        sb.append("//   - 録画から累積弾数を読み取り、ツールで現在フレームを特定済み\n");
+        sb.append("//   - wait_ms に「(目標F - 現在F) / 30 * 1000」を設定\n");
+        sb.append("//\n");
+        sb.append("// 動作:\n");
+        sb.append("//   1. HOMEボタンでゲーム復帰（自宅にいる状態）\n");
+        sb.append("//   2. 設定した時間だけ待機\n");
+        sb.append("//   3. ルームサービス経由でマカ錬金投入\n");
+        sb.append("//   4. ケルビマラソン（鑑定用）\n");
+        sb.append("//   5. 自宅で鑑定確認\n");
+        sb.append("// ================================================================\n");
+        sb.append("#include <NintendoSwitchControlLibrary.h>\n\n");
+
+        sb.append("unsigned long wait_ms = ").append(waitMs).append(";\n\n");
+
+        // waitWithKeepAlive関数
+        sb.append("void waitWithKeepAlive(unsigned long total_ms,\n");
+        sb.append("                       uint16_t button = Button::X,\n");
+        sb.append("                       unsigned long interval_ms = 5000,\n");
+        sb.append("                       unsigned long press_ms = 100)\n");
+        sb.append("{\n");
+        sb.append("    if (total_ms <= 10000) { delay(total_ms); return; }\n");
+        sb.append("    unsigned long cycle = interval_ms;\n");
+        sb.append("    unsigned long n = total_ms / cycle;\n");
+        sb.append("    unsigned long rem = total_ms % cycle;\n");
+        sb.append("    for (unsigned long i = 0; i < n; i++) {\n");
+        sb.append("        SwitchControlLibrary().pressButton(button);\n");
+        sb.append("        SwitchControlLibrary().sendReport();\n");
+        sb.append("        delay(press_ms);\n");
+        sb.append("        SwitchControlLibrary().releaseButton(button);\n");
+        sb.append("        SwitchControlLibrary().sendReport();\n");
+        sb.append("        delay(interval_ms - press_ms);\n");
+        sb.append("    }\n");
+        sb.append("    if (rem > 0) { delay(rem); }\n");
+        sb.append("}\n\n");
+
+        sb.append("void setup() {\n");
+        sb.append("    delay(50);\n\n");
+
+        // Step 1: HOMEでゲーム復帰
+        sb.append("    // Step 1: HOMEでゲーム復帰\n");
+        sb.append("    pushButton(Button::HOME, 1000);\n");
+        sb.append("    delay(2000); // ゲーム復帰待ち\n\n");
+
+        // Step 2: 待機
+        sb.append("    // Step 2: 目標フレームまで待機 (%d ms)\n".formatted(waitMs));
+        sb.append("    waitWithKeepAlive(wait_ms);\n\n");
+
+        // Step 3: ルームサービスでマカ錬金
+        sb.append("    // Step 3: ルームサービス経由でマカ錬金投入\n");
+        sb.append("    // （自宅にいる前提。ルームサービスに話しかける）\n");
+        sb.append("    tiltLeftStick(Stick::MAX, Stick::NEUTRAL, 700);\n");
+        sb.append("    pushButton(Button::A, 250, 2); // 話しかけ\n");
+        sb.append("    pushButton(Button::B, 250, 2); // 会話スキップ\n");
+        sb.append("    delay(100);\n");
+        sb.append("    pushButton(Button::A, 250);    // メニュー\n");
+        sb.append("    pushHat(Hat::DOWN, 50, 3);     // マカ錬金に移動\n");
+        sb.append("    pushButton(Button::A, 250);    // マカ錬金選択\n");
+        sb.append("    pushHat(Hat::UP);              // マカフシギ錬金術\n");
+        sb.append("    pushButton(Button::A, 10);\n");
+        sb.append("    pushButton(Button::A, 10);     // 1番目の護石\n");
+        sb.append("    pushHat(Hat::DOWN, 10);\n");
+        sb.append("    pushButton(Button::A, 10);     // 2番目の護石\n");
+        sb.append("    pushHat(Hat::DOWN, 10);\n");
+        sb.append("    pushButton(Button::A, 10);     // 3番目の護石\n");
+        sb.append("    pushButton(Button::A, 100, 2); // 投入確定\n");
+        sb.append("    pushButton(Button::B, 100, 5); // 会話終了\n\n");
+
+        // Step 4: ケルビマラソン
+        sb.append("    // Step 4: ケルビマラソン（鑑定用クエスト）\n");
+        sb.append("    // ココット村受付嬢へダッシュ\n");
+        sb.append("    pushButton(Button::B, 200, 3); // メニュークリア\n");
+        sb.append("    SwitchControlLibrary().pressButton(Button::R);\n");
+        sb.append("    SwitchControlLibrary().sendReport();\n");
+        sb.append("    tiltLeftStick(Stick::MAX, Stick::MIN, 1500); // 右上にダッシュ\n");
+        sb.append("    SwitchControlLibrary().releaseButton(Button::R);\n");
+        sb.append("    SwitchControlLibrary().sendReport();\n");
+        sb.append("    pushButton(Button::A, 250, 3); // 受付嬢に話しかけ\n");
+        sb.append("    pushButton(Button::B, 250, 4); // 会話スキップ\n");
+        sb.append("    delay(100);\n");
+        sb.append("    pushHat(Hat::UP);              // 下位クエスト\n");
+        sb.append("    pushButton(Button::A, 100);\n");
+        sb.append("    pushHat(Hat::DOWN);            // Lv1\n");
+        sb.append("    pushButton(Button::A, 100);\n");
+        sb.append("    pushHat(Hat::DOWN, 50, 3);    // 森の中のケルビ\n");
+        sb.append("    pushButton(Button::A, 50, 5); // 受注\n");
+        sb.append("    pushButton(Button::B, 250, 4);\n\n");
+
+        sb.append("    // クエスト出発\n");
+        sb.append("    SwitchControlLibrary().pressButton(Button::R);\n");
+        sb.append("    SwitchControlLibrary().sendReport();\n");
+        sb.append("    tiltLeftStick(Stick::MIN, Stick::NEUTRAL, 800);\n");
+        sb.append("    tiltLeftStick(Stick::NEUTRAL, Stick::MIN, 2300);\n");
+        sb.append("    SwitchControlLibrary().releaseButton(Button::R);\n");
+        sb.append("    SwitchControlLibrary().sendReport();\n");
+        sb.append("    pushButton(Button::A, 50, 5);\n");
+        sb.append("    delay(8700);\n\n");
+
+        sb.append("    // ケルビの角を納品\n");
+        sb.append("    pushButton(Button::PLUS, 250);\n");
+        sb.append("    pushButton(Button::A, 250, 2);\n");
+        sb.append("    pushHat(Hat::DOWN, 50, 2);\n");
+        sb.append("    pushButton(Button::A, 250);\n");
+        sb.append("    pushHat(Hat::RIGHT);\n");
+        sb.append("    pushButton(Button::A, 250, 4);\n");
+        sb.append("    delay(36000);\n\n");
+
+        sb.append("    // 報酬売却 → セーブせず終了\n");
+        sb.append("    pushHat(Hat::UP);\n");
+        sb.append("    pushButton(Button::A, 250);\n");
+        sb.append("    pushHat(Hat::LEFT);\n");
+        sb.append("    pushButton(Button::A, 250, 5);\n");
+        sb.append("    pushButton(Button::B, 250);\n");
+        sb.append("    pushButton(Button::A, 250);\n");
+        sb.append("    delay(7900);\n\n");
+
+        // Step 5: 自宅で鑑定
+        sb.append("    // Step 5: 自宅で鑑定\n");
+        sb.append("    pushButton(Button::X, 250);\n");
+        sb.append("    pushButton(Button::A, 250, 2);\n");
+        sb.append("    delay(2000);\n");
+        sb.append("    tiltLeftStick(Stick::MAX, Stick::NEUTRAL, 700);\n");
+        sb.append("    pushButton(Button::A, 250, 2);\n");
+        sb.append("    pushButton(Button::B, 250, 2);\n");
+        sb.append("    delay(100);\n");
+        sb.append("    pushButton(Button::A, 250);\n");
+        sb.append("    pushHat(Hat::DOWN, 50, 3);\n");
+        sb.append("    pushButton(Button::A, 250); // マカ錬金\n");
+        sb.append("    pushHat(Hat::DOWN, 50);\n");
+        sb.append("    pushButton(Button::A, 250, 2); // 鑑定\n");
+        sb.append("}\n\n");
+        sb.append("void loop() {}\n");
+
+        return sb.toString();
     }
 
     // ================================================================
@@ -3345,5 +3640,1209 @@ public class MHXXCharmApp extends JFrame {
                         "エラー", JOptionPane.ERROR_MESSAGE);
             }
         });
+    }
+
+    // ================================================================
+    // Quest Loop Tab (Phase 1-B: クエスト自動周回スケッチ生成)
+    // ================================================================
+    JPanel buildQuestLoopTab() {
+        JPanel tab = new JPanel(new BorderLayout(8,8));
+        tab.setBackground(BG);
+        tab.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
+
+        // 上部：パラメータ入力
+        JPanel top = new JPanel();
+        top.setBackground(BG);
+        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
+
+        JPanel inputPanel = titled("クエスト自動周回スケッチ生成 (G★2 火山の採集ツアー)");
+        inputPanel.setLayout(new BoxLayout(inputPanel, BoxLayout.Y_AXIS));
+
+        // 説明
+        JPanel descRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        descRow.setOpaque(false);
+        JLabel desc = new JLabel(
+            "<html><body style='width:800px; color:#8888aa;'>" +
+            "G★2「火山の採集ツアー」を自動周回するArduinoスケッチを生成します。<br>" +
+            "<b>想定フロー:</b> 結果画面→受注→BC→エリア4採掘→モドリ玉→納品→報酬→結果画面(ループ)<br>" +
+            "<b>前提:</b> モドリ玉・ピッケル複数本・クーラードリンクを持参／オトモなし推奨／" +
+            "1周目はユーザが手動クリア。<br>" +
+            "<b>注意:</b> デフォルト値は机上推定。実機で少しずつ調整すること。" +
+            "</body></html>");
+        desc.setFont(FONT_SMALL);
+        descRow.add(desc);
+        inputPanel.add(descRow);
+
+        // パラメータ入力フィールドたち
+        QuestSketchParams defaults = new QuestSketchParams();
+
+        JTextField fResultA = makeField(String.valueOf(defaults.resultScreenAPressCount), 6);
+        JTextField fAInterval = makeField(String.valueOf(defaults.aPressIntervalMs), 6);
+        JTextField fBCWait = makeField(String.valueOf(defaults.bcStartWaitMs), 6);
+        JTextField fBC2A4 = makeField(String.valueOf(defaults.bcToArea4TravelMs), 6);
+        JTextField fAreaLoad = makeField(String.valueOf(defaults.areaLoadWaitMs), 6);
+        JTextField fA4Inner = makeField(String.valueOf(defaults.area4InnerMoveMs), 6);
+        JTextField fDigCount = makeField(String.valueOf(defaults.diggingAPressCount), 6);
+        JTextField fDigInterval = makeField(String.valueOf(defaults.diggingAPressIntervalMs), 6);
+        JTextField fModoriDown = makeField(String.valueOf(defaults.modoriDaArrowDownCount), 6);
+        JTextField fModoriWait = makeField(String.valueOf(defaults.modoriDaUseWaitMs), 6);
+        JTextField fDeliveryMove = makeField(String.valueOf(defaults.deliveryBoxTravelMs), 6);
+        JTextField fDeliveryA = makeField(String.valueOf(defaults.deliveryAPressCount), 6);
+        JTextField fRewardA = makeField(String.valueOf(defaults.rewardScreenAPressCount), 6);
+
+        // Row 1: 結果画面関連
+        JPanel r1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r1.setOpaque(false);
+        r1.add(label("【結果画面】Aボタン連打回数:"));
+        r1.add(fResultA);
+        r1.add(label("  A連打間隔(ms):"));
+        r1.add(fAInterval);
+        inputPanel.add(r1);
+
+        // Row 2: BC起動・移動
+        JPanel r2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r2.setOpaque(false);
+        r2.add(label("【BC】起動待機(ms):"));
+        r2.add(fBCWait);
+        r2.add(label("  BC→エリア4走行(ms):"));
+        r2.add(fBC2A4);
+        r2.add(label("  エリア切替ロード(ms):"));
+        r2.add(fAreaLoad);
+        inputPanel.add(r2);
+
+        // Row 3: 採掘関連
+        JPanel r3 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r3.setOpaque(false);
+        r3.add(label("【採掘】エリア4内移動(ms):"));
+        r3.add(fA4Inner);
+        r3.add(label("  A連打回数:"));
+        r3.add(fDigCount);
+        r3.add(label("  A連打間隔(ms):"));
+        r3.add(fDigInterval);
+        inputPanel.add(r3);
+
+        // Row 4: モドリ玉
+        JPanel r4 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r4.setOpaque(false);
+        r4.add(label("【モドリ玉】↓キー回数(実機調整):"));
+        r4.add(fModoriDown);
+        r4.add(label("  使用後BC帰還待機(ms):"));
+        r4.add(fModoriWait);
+        inputPanel.add(r4);
+
+        // Row 5: 納品・ループ
+        JPanel r5 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r5.setOpaque(false);
+        r5.add(label("【納品】納品ボックス移動(ms):"));
+        r5.add(fDeliveryMove);
+        r5.add(label("  A連打回数:"));
+        r5.add(fDeliveryA);
+        r5.add(label("  【報酬画面】A連打:"));
+        r5.add(fRewardA);
+        inputPanel.add(r5);
+
+        // 生成ボタン
+        JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 8));
+        btnRow.setOpaque(false);
+        JButton genBtn = makeButton("▶ スケッチを生成", ACCENT);
+        btnRow.add(genBtn);
+        JButton copyBtn = makeButton("📋 クリップボードにコピー", BTN_BG);
+        btnRow.add(copyBtn);
+        JButton resetBtn = makeButton("↻ デフォルトに戻す", BTN_BG);
+        btnRow.add(resetBtn);
+        inputPanel.add(btnRow);
+
+        top.add(inputPanel);
+        tab.add(top, BorderLayout.NORTH);
+
+        // 出力エリア
+        JTextArea outputArea = new JTextArea();
+        outputArea.setFont(FONT_MONO_SMALL);
+        outputArea.setBackground(BG2);
+        outputArea.setForeground(FG);
+        outputArea.setCaretColor(FG);
+        outputArea.setEditable(true);
+        outputArea.setTabSize(2);
+        outputArea.setText("▶ スケッチを生成 ボタンを押すとここにコードが表示されます。");
+        JScrollPane outScroll = new JScrollPane(outputArea);
+        setupScrollSpeed(outScroll);
+        JPanel outPanel = titled("生成されたArduinoスケッチ (Arduino IDEにコピペして使用)");
+        outPanel.setLayout(new BorderLayout());
+        outPanel.add(outScroll, BorderLayout.CENTER);
+        tab.add(outPanel, BorderLayout.CENTER);
+
+        // 生成ボタンのアクション
+        genBtn.addActionListener(e -> {
+            try {
+                QuestSketchParams p = new QuestSketchParams();
+                p.resultScreenAPressCount = Integer.parseInt(fResultA.getText().trim());
+                p.aPressIntervalMs = Integer.parseInt(fAInterval.getText().trim());
+                p.bcStartWaitMs = Integer.parseInt(fBCWait.getText().trim());
+                p.bcToArea4TravelMs = Integer.parseInt(fBC2A4.getText().trim());
+                p.areaLoadWaitMs = Integer.parseInt(fAreaLoad.getText().trim());
+                p.area4InnerMoveMs = Integer.parseInt(fA4Inner.getText().trim());
+                p.diggingAPressCount = Integer.parseInt(fDigCount.getText().trim());
+                p.diggingAPressIntervalMs = Integer.parseInt(fDigInterval.getText().trim());
+                p.modoriDaArrowDownCount = Integer.parseInt(fModoriDown.getText().trim());
+                p.modoriDaUseWaitMs = Integer.parseInt(fModoriWait.getText().trim());
+                p.deliveryBoxTravelMs = Integer.parseInt(fDeliveryMove.getText().trim());
+                p.deliveryAPressCount = Integer.parseInt(fDeliveryA.getText().trim());
+                p.rewardScreenAPressCount = Integer.parseInt(fRewardA.getText().trim());
+
+                String sketch = generateQuestSketch(p);
+                outputArea.setText(sketch);
+                outputArea.setCaretPosition(0);
+                statusLabel.setText("スケッチ生成完了");
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(tab,
+                    "数値を正しく入力してください: " + ex.getMessage(),
+                    "入力エラー", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        // コピーボタン
+        copyBtn.addActionListener(e -> {
+            String text = outputArea.getText();
+            if (text.isEmpty() || text.startsWith("▶")) {
+                JOptionPane.showMessageDialog(tab,
+                    "先に「スケッチを生成」を押してください",
+                    "情報", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            java.awt.datatransfer.StringSelection sel = new java.awt.datatransfer.StringSelection(text);
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
+            statusLabel.setText("クリップボードにコピーしました");
+        });
+
+        // リセットボタン
+        resetBtn.addActionListener(e -> {
+            QuestSketchParams d = new QuestSketchParams();
+            fResultA.setText(String.valueOf(d.resultScreenAPressCount));
+            fAInterval.setText(String.valueOf(d.aPressIntervalMs));
+            fBCWait.setText(String.valueOf(d.bcStartWaitMs));
+            fBC2A4.setText(String.valueOf(d.bcToArea4TravelMs));
+            fAreaLoad.setText(String.valueOf(d.areaLoadWaitMs));
+            fA4Inner.setText(String.valueOf(d.area4InnerMoveMs));
+            fDigCount.setText(String.valueOf(d.diggingAPressCount));
+            fDigInterval.setText(String.valueOf(d.diggingAPressIntervalMs));
+            fModoriDown.setText(String.valueOf(d.modoriDaArrowDownCount));
+            fModoriWait.setText(String.valueOf(d.modoriDaUseWaitMs));
+            fDeliveryMove.setText(String.valueOf(d.deliveryBoxTravelMs));
+            fDeliveryA.setText(String.valueOf(d.deliveryAPressCount));
+            fRewardA.setText(String.valueOf(d.rewardScreenAPressCount));
+            statusLabel.setText("デフォルト値に戻しました");
+        });
+
+        return tab;
+    }
+
+    // ================================================================
+    // Combo Snipe Tab UI
+    // ================================================================
+    JPanel buildComboSnipeTab() {
+        JPanel tab = new JPanel(new BorderLayout(8,8));
+        tab.setBackground(BG);
+        tab.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
+
+        JPanel settings = titled("調合スナイプ（Lv2通常弾の個数列から現在フレーム特定）");
+        settings.setLayout(new BoxLayout(settings, BoxLayout.Y_AXIS));
+
+        // 説明
+        JPanel descRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        descRow.setOpaque(false);
+        JLabel desc = new JLabel(
+            "<html><body style='width:800px; color:#8888aa;'>" +
+            "ハリの実 + カラの実 を<b>各16個以上</b>用意し、調合書を持ってアイテムボックス内で<br>" +
+            "<b>Lv2通常弾を連続調合</b>。Switch録画で弾数の変化を記録し、現在フレームを逆算。<br>" +
+            "場所は<b>ココット村自宅</b>推奨（ルームサービス=モガの村の看板娘、ペット/オトモなし）。<br>" +
+            "<b>入力形式:</b> 累積弾数（0始まり、例: <code>0 2 4 7 10 13 16</code>）<br>" +
+            "　　 or 個数列（各回の調合数、例: <code>2,2,3,3,3,3</code>）— 自動判定します。" +
+            "</body></html>");
+        desc.setFont(FONT_SMALL);
+        descRow.add(desc);
+        settings.add(descRow);
+
+        // 個数列入力
+        JTextField countsField = makeField("0 2 4 7 10 13 16 18 22 25 28 30 32 35 39 42 45", 60);
+        countsField.setToolTipText("累積弾数（0始まり）or 個数列（2,3,4）を入力。自動判定します");
+
+        // クリック入力UI（録画を見ながらボタンで累積）
+        JPanel clickRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        clickRow.setOpaque(false);
+        clickRow.add(label("クリック入力:"));
+        JButton plus2Btn = makeButton(" +2 ", BTN_BG);
+        plus2Btn.setToolTipText("次の調合で+2 (キーボード: 2)");
+        JButton plus3Btn = makeButton(" +3 ", BTN_BG);
+        plus3Btn.setToolTipText("次の調合で+3 (キーボード: 3)");
+        JButton plus4Btn = makeButton(" +4 ", BTN_BG);
+        plus4Btn.setToolTipText("次の調合で+4 (キーボード: 4)");
+        JButton undoBtn = makeButton("← 取消", BTN_BG);
+        undoBtn.setToolTipText("直前の入力を取消 (キーボード: Backspace)");
+        JButton clearBtn = makeButton("クリア", BTN_BG);
+        clearBtn.setToolTipText("入力をリセット");
+        clickRow.add(plus2Btn);
+        clickRow.add(plus3Btn);
+        clickRow.add(plus4Btn);
+        clickRow.add(new JLabel("  "));
+        clickRow.add(undoBtn);
+        clickRow.add(clearBtn);
+        JLabel clickStatusLabel = new JLabel("（0回入力）");
+        clickStatusLabel.setForeground(new java.awt.Color(0x88, 0x88, 0xaa));
+        clickRow.add(clickStatusLabel);
+        settings.add(clickRow);
+
+        JPanel row1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        row1.setOpaque(false);
+        row1.add(label("累積弾数 or 個数列:"));
+        row1.add(countsField);
+        settings.add(row1);
+
+        // クリック入力のロジック
+        // 累積列を内部状態として管理。テキストフィールドと同期させる。
+        java.util.List<Integer> cumulativeList = new java.util.ArrayList<>();
+        cumulativeList.add(0); // 初期値0
+        // 既にデフォルト値がテキストフィールドにあるので、それを初期累積列としてパース
+        try {
+            String defaultText = countsField.getText().trim();
+            String[] defaultParts = defaultText.split("[,，\\s、]+");
+            int[] parsed = new int[defaultParts.length];
+            for (int i = 0; i < defaultParts.length; i++) parsed[i] = Integer.parseInt(defaultParts[i].trim());
+            // 累積列として妥当か確認
+            boolean isCum = parsed.length >= 1 && parsed[0] == 0;
+            if (isCum) {
+                for (int i = 1; i < parsed.length; i++) {
+                    if (parsed[i] <= parsed[i-1]) { isCum = false; break; }
+                }
+            }
+            if (isCum) {
+                cumulativeList.clear();
+                for (int v : parsed) cumulativeList.add(v);
+            }
+        } catch (NumberFormatException ignored) {}
+
+        Runnable syncToField = () -> {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < cumulativeList.size(); i++) {
+                if (i > 0) sb.append(' ');
+                sb.append(cumulativeList.get(i));
+            }
+            countsField.setText(sb.toString());
+            int rolls = cumulativeList.size() - 1;
+            if (rolls < 0) rolls = 0;
+            clickStatusLabel.setText("（" + rolls + "回入力, 累積=" 
+                + (cumulativeList.isEmpty() ? "-" : cumulativeList.get(cumulativeList.size() - 1)) + "）");
+        };
+        // 初期同期
+        syncToField.run();
+
+        java.util.function.IntConsumer addAmount = amount -> {
+            int last = cumulativeList.isEmpty() ? 0 : cumulativeList.get(cumulativeList.size() - 1);
+            cumulativeList.add(last + amount);
+            syncToField.run();
+        };
+
+        plus2Btn.addActionListener(e -> addAmount.accept(2));
+        plus3Btn.addActionListener(e -> addAmount.accept(3));
+        plus4Btn.addActionListener(e -> addAmount.accept(4));
+
+        undoBtn.addActionListener(e -> {
+            if (cumulativeList.size() > 1) {
+                cumulativeList.remove(cumulativeList.size() - 1);
+                syncToField.run();
+            }
+        });
+
+        clearBtn.addActionListener(e -> {
+            cumulativeList.clear();
+            cumulativeList.add(0);
+            syncToField.run();
+        });
+
+        // キーボードショートカット（タブ全体に対して、テキストフィールド以外のフォーカス時のみ）
+        // KeyBindingsを使ってWHEN_IN_FOCUSED_WINDOWで反応させる
+        InputMap inputMap = tab.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+        ActionMap actionMap = tab.getActionMap();
+        // 数字2,3,4 + Backspace
+        inputMap.put(KeyStroke.getKeyStroke('2'), "add2");
+        inputMap.put(KeyStroke.getKeyStroke('3'), "add3");
+        inputMap.put(KeyStroke.getKeyStroke('4'), "add4");
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_BACK_SPACE, 0), "undo");
+        actionMap.put("add2", new AbstractAction() {
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                // テキストフィールドにフォーカスがある時は通常入力を優先
+                java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+                if (focused == countsField) return;
+                addAmount.accept(2);
+            }
+        });
+        actionMap.put("add3", new AbstractAction() {
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+                if (focused == countsField) return;
+                addAmount.accept(3);
+            }
+        });
+        actionMap.put("add4", new AbstractAction() {
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+                if (focused == countsField) return;
+                addAmount.accept(4);
+            }
+        });
+        actionMap.put("undo", new AbstractAction() {
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+                if (focused == countsField) return;
+                if (cumulativeList.size() > 1) {
+                    cumulativeList.remove(cumulativeList.size() - 1);
+                    syncToField.run();
+                }
+            }
+        });
+
+        // テキストフィールド側で手入力した時は内部リストを再同期する
+        countsField.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override public void focusLost(java.awt.event.FocusEvent e) {
+                String input = countsField.getText().trim();
+                String[] parts = input.split("[,，\\s、]+");
+                java.util.List<Integer> newList = new java.util.ArrayList<>();
+                try {
+                    int[] parsed = new int[parts.length];
+                    for (int i = 0; i < parts.length; i++) parsed[i] = Integer.parseInt(parts[i].trim());
+                    boolean isCum = parsed.length >= 1 && parsed[0] == 0;
+                    if (isCum) {
+                        for (int i = 1; i < parsed.length; i++) {
+                            if (parsed[i] <= parsed[i-1]) { isCum = false; break; }
+                        }
+                    }
+                    if (isCum) {
+                        for (int v : parsed) newList.add(v);
+                        cumulativeList.clear();
+                        cumulativeList.addAll(newList);
+                        // ステータスのみ更新（テキスト再書き込みは不要）
+                        int rolls = cumulativeList.size() - 1;
+                        if (rolls < 0) rolls = 0;
+                        clickStatusLabel.setText("（" + rolls + "回入力, 累積=" 
+                            + cumulativeList.get(cumulativeList.size() - 1) + "）");
+                    } else {
+                        // 個数列モード：内部累積リストとは切り離す
+                        clickStatusLabel.setText("（個数列モード - クリック入力は累積列専用）");
+                    }
+                } catch (NumberFormatException ignored) {
+                    clickStatusLabel.setText("（入力が不正）");
+                }
+            }
+        });
+
+        // 検索範囲 + 目標F + ボタン
+        JTextField rangeField = makeField("1000000", 12);
+        rangeField.setToolTipText(
+            "<html>検索するフレーム数の上限。<br>" +
+            "目標Fを入力した場合は自動で「目標F+マージン」に上書きされる。<br>" +
+            "範囲が広すぎると偽マッチが大量発生する点に注意。</html>");
+        JTextField targetFField = makeField("", 12);
+        targetFField.setToolTipText(
+            "<html><b>狙うお守りのフレーム位置（任意）</b><br>" +
+            "入力すると検索範囲を「目標F+10万」に自動設定し、偽マッチを大幅削減。<br>" +
+            "候補ハイライト（目標F以下で最も近い候補を緑）にも使う。</html>");
+        JPanel row2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        row2.setOpaque(false);
+        row2.add(label("検索範囲:"));
+        row2.add(rangeField);
+        row2.add(label("F  目標F:"));
+        row2.add(targetFField);
+        JButton searchBtn = makeButton("▶ 逆算開始", ACCENT);
+        row2.add(searchBtn);
+        JButton cancelBtn = makeButton("■ 中止", BTN_BG);
+        row2.add(cancelBtn);
+        settings.add(row2);
+
+        // 観測数推定行
+        JPanel row2b = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        row2b.setOpaque(false);
+        JLabel estimateLabel = new JLabel("");
+        estimateLabel.setForeground(new java.awt.Color(0x88, 0x88, 0xaa));
+        row2b.add(estimateLabel);
+        settings.add(row2b);
+
+        // 入力変化に応じた推定候補数の更新
+        Runnable updateEstimate = () -> {
+            try {
+                String input = countsField.getText().trim();
+                String[] parts = input.split("[,，\\s、]+");
+                int observed;
+                // 累積列か個数列かを推定。0始まりなら累積（観測数 = 要素数 - 1）
+                if (parts.length >= 2 && parts[0].trim().equals("0")) {
+                    observed = parts.length - 1;
+                } else {
+                    observed = parts.length;
+                }
+                long range;
+                String tgtStr = targetFField.getText().trim();
+                if (!tgtStr.isEmpty()) {
+                    try {
+                        long tgt = Long.parseLong(tgtStr);
+                        range = tgt + 100_000;
+                    } catch (NumberFormatException nfe) {
+                        range = Long.parseLong(rangeField.getText().trim());
+                    }
+                } else {
+                    range = Long.parseLong(rangeField.getText().trim());
+                }
+                // 1/3^N で偽マッチ予測（理論値）
+                double expectedFalse = (double)range / Math.pow(3, observed);
+                // 推奨観測数: 期待偽マッチ < 0.5 になる N
+                int recommendN = Math.max(1, (int)Math.ceil(Math.log(2.0 * range) / Math.log(3.0)));
+                String color = expectedFalse < 1 ? "#88cc88" : (expectedFalse < 10 ? "#cccc88" : "#cc8888");
+                estimateLabel.setText(String.format(
+                    "<html>観測数 %d 回 / 検索範囲 %,d F → 想定候補数 <span style='color:%s;'>約 %s 件</span>　推奨観測数: %d 回以上</html>",
+                    observed, range, color, 
+                    expectedFalse < 1 ? String.format("%.2f", expectedFalse) : String.format("%.0f", expectedFalse),
+                    recommendN));
+            } catch (NumberFormatException ex) {
+                estimateLabel.setText("（入力を読み取れません）");
+            }
+        };
+        countsField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
+        });
+        targetFField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { 
+                // 目標F入力時、検索範囲を自動更新
+                String tgtStr = targetFField.getText().trim();
+                if (!tgtStr.isEmpty()) {
+                    try {
+                        long tgt = Long.parseLong(tgtStr);
+                        // 目標Fを超えている可能性も考慮し、最低1億Fは確保
+                        long autoRange = Math.max(tgt + 100_000, 100_000_000L);
+                        rangeField.setText(String.valueOf(autoRange));
+                    } catch (NumberFormatException ignored) {}
+                }
+                updateEstimate.run();
+            }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { 
+                String tgtStr = targetFField.getText().trim();
+                if (!tgtStr.isEmpty()) {
+                    try {
+                        long tgt = Long.parseLong(tgtStr);
+                        long autoRange = Math.max(tgt + 100_000, 100_000_000L);
+                        rangeField.setText(String.valueOf(autoRange));
+                    } catch (NumberFormatException ignored) {}
+                }
+                updateEstimate.run();
+            }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
+        });
+        rangeField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
+        });
+        // 初回呼び出し
+        SwingUtilities.invokeLater(updateEstimate);
+
+        // 結果サマリ
+        JLabel summaryLabel = new JLabel("");
+        summaryLabel.setFont(FONT_LARGE);
+        summaryLabel.setForeground(SUCCESS);
+        JPanel row3 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        row3.setOpaque(false);
+        row3.add(summaryLabel);
+        settings.add(row3);
+
+        tab.add(settings, BorderLayout.NORTH);
+
+        // 結果テーブル
+        DefaultTableModel comboModel = new DefaultTableModel(
+                new String[]{"フレーム","消費後フレーム","待ち時間","→周辺のお守り（マカ錬金用）"}, 0);
+        JTable comboTable = makeTable(comboModel);
+        comboTable.setToolTipText(
+            "<html>ダブルクリック→周辺表示にジャンプ / 右クリック→Arduinoコード生成<br>" +
+            "<b>「調合Arduino」タブの「現在F」には「消費後フレーム」列の値を入力</b></html>");
+        comboTable.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    int row = comboTable.getSelectedRow();
+                    if (row >= 0) {
+                        int modelRow = comboTable.convertRowIndexToModel(row);
+                        Object val = comboModel.getValueAt(modelRow, 0);
+                        aroundFrame.setText(val.toString());
+                        aroundOrigin.setSelectedIndex(0); // マカ錬金
+                        tabs.setSelectedIndex(1);
+                        showAround();
+                    }
+                }
+            }
+        });
+        addArduinoContextMenu(comboTable, comboModel, 0);
+
+        JScrollPane sp = new JScrollPane(comboTable);
+        setupScrollSpeed(sp);
+        sp.getViewport().setBackground(BG2);
+        JPanel rp = titled("候補フレーム（調合個数列が一致するフレーム）");
+        rp.setLayout(new BorderLayout());
+        rp.add(sp, BorderLayout.CENTER);
+        tab.add(rp, BorderLayout.CENTER);
+
+        // 検索ボタンのアクション
+        searchBtn.addActionListener(e -> {
+            cancelFlag.set(false);
+            comboModel.setRowCount(0);
+
+            // 個数列のパース（カンマ・スペース・日本語句読点も許容）
+            // 累積列（0始まり、単調増加）と個数列（各要素2〜4）を自動判定
+            String input = countsField.getText().trim();
+            String[] parts = input.split("[,，\\s、]+");
+            int[] counts;
+            try {
+                int[] raw = new int[parts.length];
+                for (int i = 0; i < parts.length; i++) {
+                    raw[i] = Integer.parseInt(parts[i].trim());
+                }
+
+                // 累積列判定: 先頭が0で単調増加ならば累積列
+                boolean isCumulative = raw.length >= 3 && raw[0] == 0;
+                if (isCumulative) {
+                    for (int i = 1; i < raw.length; i++) {
+                        if (raw[i] <= raw[i-1]) { isCumulative = false; break; }
+                    }
+                }
+
+                if (isCumulative) {
+                    // 累積列 → 差分に変換
+                    counts = new int[raw.length - 1];
+                    for (int i = 0; i < counts.length; i++) {
+                        counts[i] = raw[i+1] - raw[i];
+                        if (counts[i] < 2 || counts[i] > 4) {
+                            throw new NumberFormatException(
+                                "累積列の差分が範囲外: " + raw[i] + "→" + raw[i+1] + " (差=" + counts[i] + ")");
+                        }
+                    }
+                    summaryLabel.setText("累積列として解釈（" + counts.length + "回分）");
+                    summaryLabel.setForeground(FG);
+                } else {
+                    // 個数列として解釈
+                    counts = raw;
+                    for (int c : counts) {
+                        if (c < 2 || c > 4) {
+                            throw new NumberFormatException("個数は2, 3, 4のみ有効: " + c);
+                        }
+                    }
+                }
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(tab,
+                    "入力を正しく入力してください。\n" +
+                    "個数列: 2,3,4をカンマ/スペース区切り（例: 3,3,2,4,3）\n" +
+                    "累積列: 0始まりの累積弾数（例: 0 2 4 7 10 13）\n\n" + ex.getMessage(),
+                    "入力エラー", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            long maxF;
+            try {
+                maxF = Long.parseLong(rangeField.getText().trim());
+                if (maxF <= 0) throw new NumberFormatException("検索範囲は正の値");
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(tab, "検索範囲は数値で入力してください",
+                    "入力エラー", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            final int[] fCounts = counts;
+            final long fMaxF = maxF;
+
+            CharmData cd = new CharmData();
+            cd.setBlue(); // 風化したお守り
+
+            statusLabel.setText("調合スナイプ逆算中...");
+            progressBar.setValue(0);
+            progressBar.setVisible(true);
+            searchBtn.setEnabled(false);
+
+            Thread.ofVirtual().start(() -> {
+                long t0 = System.currentTimeMillis();
+                List<Long> results = reverseSearchCombo(fCounts, fMaxF, cancelFlag);
+
+                SwingUtilities.invokeLater(() -> {
+                    int consumedPerRoll = 5;
+                    int totalConsumed = fCounts.length * consumedPerRoll;
+                    for (Long f : results) {
+                        long afterFrame = f + totalConsumed;
+                        // 消費後のフレームでマカ錬金のお守りを計算
+                        RNG charmRng = new RNG();
+                        charmRng.jump(afterFrame);
+                        Charm charm = getCharm(charmRng, cd, 0); // マカ錬金
+
+                        String charmStr = charm.s1Name() + charm.sp1()
+                            + (charm.s2Name() != null ? " " + charm.s2Name() + charm.sp2() : "")
+                            + " s" + charm.slot();
+
+                        comboModel.addRow(new Object[]{
+                            f, afterFrame, framesToTime(f), charmStr
+                        });
+                    }
+
+                    double elapsed = (System.currentTimeMillis() - t0) / 1000.0;
+                    progressBar.setVisible(false);
+                    searchBtn.setEnabled(true);
+                    statusLabel.setText(String.format("調合スナイプ完了: %d件 (%.2f秒)",
+                        results.size(), elapsed));
+
+                    // 目標F取得（任意）
+                    Long targetF = null;
+                    String tgtStr = targetFField.getText().trim();
+                    if (!tgtStr.isEmpty()) {
+                        try { targetF = Long.parseLong(tgtStr); } catch (NumberFormatException ignored) {}
+                    }
+                    final Long fTargetF = targetF;
+
+                    // 目標Fに最も近い候補（目標F以下）を探す
+                    Long bestCandidate = null;
+                    if (fTargetF != null) {
+                        for (Long f : results) {
+                            if (f <= fTargetF) {
+                                if (bestCandidate == null || f > bestCandidate) {
+                                    bestCandidate = f;
+                                }
+                            }
+                        }
+                    }
+                    final Long fBestCandidate = bestCandidate;
+
+                    // 行レンダラーで目標F近傍をハイライト
+                    comboTable.setDefaultRenderer(Object.class, new javax.swing.table.DefaultTableCellRenderer() {
+                        @Override
+                        public java.awt.Component getTableCellRendererComponent(
+                                JTable table, Object value, boolean isSelected,
+                                boolean hasFocus, int row, int column) {
+                            java.awt.Component c = super.getTableCellRendererComponent(
+                                    table, value, isSelected, hasFocus, row, column);
+                            if (!isSelected) {
+                                c.setBackground(BG2);
+                                c.setForeground(FG);
+                                if (fTargetF != null && row < table.getRowCount()) {
+                                    int modelRow = table.convertRowIndexToModel(row);
+                                    Object frameVal = table.getModel().getValueAt(modelRow, 0);
+                                    if (frameVal instanceof Long) {
+                                        long f = (Long) frameVal;
+                                        if (fBestCandidate != null && f == fBestCandidate) {
+                                            c.setBackground(new java.awt.Color(0x2a, 0x4a, 0x2a)); // 緑系: 推奨
+                                            c.setForeground(new java.awt.Color(0xa0, 0xff, 0xa0));
+                                        } else if (f > fTargetF) {
+                                            c.setForeground(new java.awt.Color(0xcc, 0x66, 0x66)); // 赤系: 目標を超過
+                                        }
+                                    }
+                                }
+                            }
+                            return c;
+                        }
+                    });
+                    comboTable.repaint();
+
+                    if (results.isEmpty()) {
+                        summaryLabel.setText(String.format(
+                            "候補なし — 個数列が誤っているか、検索範囲(%,d F)が狭すぎる可能性",
+                            fMaxF));
+                        summaryLabel.setForeground(WARN);
+                    } else if (results.size() == 1) {
+                        summaryLabel.setText("現在フレーム特定: " + results.get(0) + "F");
+                        summaryLabel.setForeground(SUCCESS);
+                    } else if (fBestCandidate != null) {
+                        // 目標F指定あり: 推奨候補を強調
+                        summaryLabel.setText(String.format(
+                            "%d件の候補 — 推奨: %d F（目標 %d F 以下で最も近い、緑色行）",
+                            results.size(), fBestCandidate, fTargetF));
+                        summaryLabel.setForeground(SUCCESS);
+                    } else {
+                        summaryLabel.setText(results.size() + "件の候補（目標Fを入力すると推奨候補をハイライトします）");
+                        summaryLabel.setForeground(WARN);
+                    }
+                });
+            });
+        });
+
+        cancelBtn.addActionListener(e -> {
+            cancelFlag.set(true);
+            statusLabel.setText("調合スナイプを中止しました");
+        });
+
+        return tab;
+    }
+
+    // ================================================================
+    // Combo Arduino Tab (調合スナイプ2コード方式)
+    // ================================================================
+    JPanel buildComboArduinoTab() {
+        JPanel tab = new JPanel(new BorderLayout(8, 8));
+        tab.setBackground(BG);
+        tab.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+        // 上部: パラメータ入力
+        JPanel top = new JPanel();
+        top.setBackground(BG);
+        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
+
+        JPanel settings = titled("調合スナイプ Arduino 2コード方式");
+        settings.setLayout(new BoxLayout(settings, BoxLayout.Y_AXIS));
+
+        // 説明
+        JPanel descRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        descRow.setOpaque(false);
+        descRow.add(new JLabel(
+            "<html><body style='width:800px; color:#8888aa;'>" +
+            "<b>ワークフロー（全3ステップ）:</b><br>" +
+            "① <b>コード1</b>をArduinoに書き込み→実行: Continue連打→ゲーム開始→自宅で調合→30秒録画→HOME中断<br>" +
+            "② <b>手動</b>: 録画確認→累積弾数を「調合スナイプ」タブに入力→現在F特定→現在Fと目標Fを入力<br>" +
+            "③ <b>コード2</b>をArduinoに書き込み→実行: HOME復帰→待機→マカ錬金→ケルビ→鑑定" +
+            "</body></html>"));
+        settings.add(descRow);
+
+        // --- コード1パラメータ ---
+        JPanel code1Header = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        code1Header.setOpaque(false);
+        JLabel c1Label = new JLabel("【コード1】フレーム消費 + 調合 + 録画");
+        c1Label.setFont(FONT_UI_BOLD);
+        c1Label.setForeground(ACCENT);
+        code1Header.add(c1Label);
+        settings.add(code1Header);
+
+        JPanel c1Row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        c1Row.setOpaque(false);
+        c1Row.add(label("Continue回数:"));
+        JTextField comboNcField = makeField("", 8);
+        comboNcField.setToolTipText("<html>Continue連打回数。目標Fが大きいほど多くする。<br>目安: 目標F ÷ 714</html>");
+        c1Row.add(comboNcField);
+        c1Row.add(label("  調合回数（目安）:"));
+        JTextField comboNumField = makeField("15", 5);
+        comboNumField.setToolTipText(
+            "<html>10秒のA長押しで実機が何回くらい調合するかの<b>目安</b>。<br>" +
+            "（生成コードのA長押し時間は10秒固定。このフィールドはメモ用）</html>");
+        c1Row.add(comboNumField);
+        c1Row.add(label("  Lv2弾までの↓数:"));
+        JTextField comboDownKeysField = makeField("0", 4);
+        comboDownKeysField.setToolTipText(
+            "<html>「リストから調合」を選んだ後、<br>" +
+            "アイテムリスト画面でLv2通常弾までカーソルを移動するための↓キー回数。<br>" +
+            "<b>実機で要調整</b>。先頭にあれば0、3番目なら2。</html>");
+        c1Row.add(comboDownKeysField);
+        JButton gen1Btn = makeButton("▶ コード1を生成", BTN_BG);
+        c1Row.add(gen1Btn);
+        settings.add(c1Row);
+
+        // --- コード2パラメータ ---
+        JPanel code2Header = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        code2Header.setOpaque(false);
+        JLabel c2Label = new JLabel("【コード2】ゲーム復帰 + 待機 + マカ錬金");
+        c2Label.setFont(FONT_UI_BOLD);
+        c2Label.setForeground(ACCENT);
+        code2Header.add(c2Label);
+        settings.add(code2Header);
+
+        JPanel c2Row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        c2Row.setOpaque(false);
+        c2Row.add(label("現在F (消費後):"));
+        JTextField comboCurrentFField = makeField("", 10);
+        comboCurrentFField.setToolTipText(
+            "<html>「調合スナイプ」タブのテーブル「<b>消費後フレーム</b>」列の値を入力。<br>" +
+            "（調合終了直後の乱数位置。HOME中断中は乱数が進まない前提で<br>" +
+            "コード2の待機開始フレームとなる）</html>");
+        c2Row.add(comboCurrentFField);
+        c2Row.add(label("  目標F:"));
+        JTextField comboTargetFField = makeField("", 10);
+        comboTargetFField.setToolTipText("「お守り検索」や「有名お守り」タブで見つけた目標フレーム");
+        c2Row.add(comboTargetFField);
+        c2Row.add(label("  → 待ち:"));
+        JLabel comboWaitLabel = new JLabel("---");
+        comboWaitLabel.setFont(FONT_LARGE);
+        comboWaitLabel.setForeground(ACCENT);
+        c2Row.add(comboWaitLabel);
+        JButton gen2Btn = makeButton("▶ コード2を生成", ACCENT);
+        c2Row.add(gen2Btn);
+        settings.add(c2Row);
+
+        top.add(settings);
+        tab.add(top, BorderLayout.NORTH);
+
+        // 下部: コード表示エリア
+        JTextArea codeArea = new JTextArea();
+        codeArea.setFont(FONT_MONO_SMALL);
+        codeArea.setBackground(BG2);
+        codeArea.setForeground(FG);
+        codeArea.setCaretColor(FG);
+        codeArea.setEditable(true);
+        codeArea.setTabSize(2);
+        codeArea.setText("// コード1またはコード2を生成するとここに表示されます。\n// Arduino IDEにコピペして書き込んでください。");
+        JScrollPane sp = new JScrollPane(codeArea);
+        setupScrollSpeed(sp);
+        JPanel codePanel = titled("生成されたArduinoスケッチ");
+        codePanel.setLayout(new BorderLayout());
+        codePanel.add(sp, BorderLayout.CENTER);
+
+        // コピーボタンをコードパネルの上に
+        JPanel codeBtnRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 2));
+        codeBtnRow.setOpaque(false);
+        JButton copyBtn = makeButton("📋 クリップボードにコピー", BTN_BG);
+        codeBtnRow.add(copyBtn);
+        codePanel.add(codeBtnRow, BorderLayout.SOUTH);
+
+        tab.add(codePanel, BorderLayout.CENTER);
+
+        // --- アクションリスナー ---
+
+        // コード1生成
+        gen1Btn.addActionListener(e -> {
+            try {
+                int nc = Integer.parseInt(comboNcField.getText().trim());
+                int downKeys = Integer.parseInt(comboDownKeysField.getText().trim());
+                String code = generateComboCode1(nc, downKeys);
+                codeArea.setText(code);
+                codeArea.setCaretPosition(0);
+                statusLabel.setText("コード1を生成しました");
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(tab, "数値を正しく入力してください", "エラー", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        // 待ち時間の自動計算
+        Runnable updateWait = () -> {
+            try {
+                long curF = Long.parseLong(comboCurrentFField.getText().trim());
+                long tgtF = Long.parseLong(comboTargetFField.getText().trim());
+                long diffF = tgtF - curF;
+                if (diffF <= 0) {
+                    comboWaitLabel.setText("目標Fが現在F以下");
+                    comboWaitLabel.setForeground(WARN);
+                } else {
+                    long waitMs = Math.round(diffF / 30.0 * 1000);
+                    comboWaitLabel.setText(String.format("%,d ms (%.1f秒)", waitMs, waitMs / 1000.0));
+                    comboWaitLabel.setForeground(ACCENT);
+                }
+            } catch (NumberFormatException ex) {
+                comboWaitLabel.setText("---");
+                comboWaitLabel.setForeground(FG);
+            }
+        };
+        comboCurrentFField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
+        });
+        comboTargetFField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
+        });
+
+        // コード2生成
+        gen2Btn.addActionListener(e -> {
+            try {
+                long curF = Long.parseLong(comboCurrentFField.getText().trim());
+                long tgtF = Long.parseLong(comboTargetFField.getText().trim());
+                long diffF = tgtF - curF;
+                if (diffF <= 0) {
+                    JOptionPane.showMessageDialog(tab, "目標Fが現在F以下です", "エラー", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+                long waitMs = Math.round(diffF / 30.0 * 1000);
+                String code = generateComboCode2(waitMs);
+                codeArea.setText(code);
+                codeArea.setCaretPosition(0);
+                statusLabel.setText(String.format("コード2を生成（待機 %,d ms = %.1f秒）", waitMs, waitMs / 1000.0));
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(tab, "現在Fと目標Fを正しく入力してください", "エラー", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        // クリップボードにコピー
+        copyBtn.addActionListener(e -> {
+            String text = codeArea.getText();
+            if (text.startsWith("//") && text.contains("コード1またはコード2")) {
+                JOptionPane.showMessageDialog(tab, "先にコードを生成してください", "情報", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            java.awt.datatransfer.StringSelection sel = new java.awt.datatransfer.StringSelection(text);
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
+            statusLabel.setText("クリップボードにコピーしました");
+        });
+
+        return tab;
+    }
+
+    // ================================================================
+    // Combo Snipe (調合スナイプ: Lv2通常弾の個数列から現在フレーム特定)
+    //
+    // 仕様 (サイファー氏 & apmnnn氏の調査より):
+    //   Lv2通常弾 = ハリの実 + カラの実（各16個以上用意）
+    //   調合書を持ってアイテムボックス内（ココット村自宅）で連続調合
+    //   (val & 0xFFFF) % 100 の値で個数が決まる:
+    //     0-24  → 2個
+    //     25-74 → 3個
+    //     75-99 → 4個
+    //   1回の調合で乱数5消費
+    // 注意:
+    //   ペット/ルームサービスがアイルー/オトモアイルー同行では挙動が変わる可能性
+    // ================================================================
+
+    /** 乱数値（16bit）から調合個数を決定する */
+    public static int comboCountFromValue(int val) {
+        int v = val % 100;
+        if (v < 25) return 2;
+        if (v < 75) return 3;
+        return 4;
+    }
+
+    /**
+     * 指定フレームから連続調合して個数列を取得する（テスト用）。
+     * @param startFrame 調合開始フレーム
+     * @param numRolls 調合回数
+     * @return 各回の個数列（長さnumRolls）
+     */
+    public static int[] simulateCombo(long startFrame, int numRolls) {
+        RNG rng = new RNG();
+        rng.jumpRaw(startFrame);
+        int[] counts = new int[numRolls];
+        for (int i = 0; i < numRolls; i++) {
+            // 各回の1回目の乱数で個数を決定、残り4回は消費（合計5消費/回）
+            rng.ascend();
+            int v = (int)((rng.w & 0xFFFF) % 100);
+            counts[i] = comboCountFromValue(v);
+            // 残り4回消費
+            for (int j = 0; j < 4; j++) rng.ascend();
+        }
+        return counts;
+    }
+
+    /**
+     * 調合個数列から一致するフレームを逆算する。
+     * @param targetCounts 実機で得た個数列
+     * @param maxFrames 検索範囲
+     * @param cancel キャンセルフラグ（nullable）
+     * @return 一致する候補フレームのリスト
+     */
+    public static List<Long> reverseSearchCombo(int[] targetCounts, long maxFrames,
+            java.util.concurrent.atomic.AtomicBoolean cancel) {
+        List<Long> results = new ArrayList<>();
+        if (targetCounts == null || targetCounts.length == 0) return results;
+        // バリデーション: 全て2,3,4であること
+        for (int c : targetCounts) {
+            if (c < 2 || c > 4) return results;
+        }
+
+        int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
+        if (maxFrames < (long)nThreads * 1000) nThreads = 1;
+
+        long chunkSize = maxFrames / nThreads;
+        List<Long> allResults = Collections.synchronizedList(new ArrayList<>());
+        ExecutorService exec = Executors.newFixedThreadPool(nThreads);
+        List<Future<?>> futures = new ArrayList<>();
+
+        for (int t = 0; t < nThreads; t++) {
+            final long startFrame = (long)t * chunkSize;
+            final long endFrame = (t == nThreads - 1) ? maxFrames : (long)(t + 1) * chunkSize;
+            futures.add(exec.submit(() -> {
+                RNG rng = new RNG();
+                rng.jumpRaw(startFrame);
+
+                long localCount = endFrame - startFrame;
+                for (long i = 0; i < localCount; i++) {
+                    if (cancel != null && cancel.get()) break;
+                    long currentFrame = startFrame + i;
+
+                    // 状態を退避
+                    long sx = rng.x, sy = rng.y, sz = rng.z, sw = rng.w;
+
+                    // targetCountsと一致するかチェック
+                    boolean match = true;
+                    for (int k = 0; k < targetCounts.length; k++) {
+                        rng.ascend();
+                        int v = (int)((rng.w & 0xFFFF) % 100);
+                        int count = comboCountFromValue(v);
+                        if (count != targetCounts[k]) {
+                            match = false;
+                            break;
+                        }
+                        // 残り4回消費
+                        for (int j = 0; j < 4; j++) rng.ascend();
+                    }
+
+                    if (match) allResults.add(currentFrame);
+
+                    // 状態を復元して1F進める
+                    rng.x = sx; rng.y = sy; rng.z = sz; rng.w = sw;
+                    rng.ascend();
+                }
+            }));
+        }
+
+        for (Future<?> f : futures) {
+            try { f.get(); } catch (Exception ignored) {}
+        }
+        exec.shutdown();
+        allResults.sort(Long::compare);
+        return allResults;
+    }
+
+    // ================================================================
+    // Quest Auto-Loop Sketch Generator (Phase 1-B)
+    //
+    // G★2「火山の採集ツアー」を自動周回するArduinoスケッチを生成する。
+    //
+    // 想定フロー:
+    //   [状態0] クエスト結果画面（ユーザが初回はここまで手動で到達）
+    //     ↓ A連打（報酬受取〜次クエスト受注〜出発）
+    //   [状態1] BC着 → 前方ダッシュでエリア4へ
+    //   [状態2] エリア4ロード待機 → 採掘ポイントへ前進
+    //   [状態3] 採掘A連打 → モドリ玉使用（メニュー→アイテム→モドリ玉→A）
+    //   [状態4] BC帰還 → 納品ボックスへ前進 → A連打で納品
+    //   [状態5] クエストクリア → 報酬画面 → 結果画面 → 状態0へループ
+    //
+    // 注意:
+    //   デフォルト値は机上推定。実機で試しながら調整する前提のパラメータ。
+    // ================================================================
+
+    /** クエスト周回スケッチのパラメータ */
+    public static class QuestSketchParams {
+        // 結果画面〜クエスト開始
+        public int resultScreenAPressCount = 15;   // 報酬受取〜出発までのA連打回数
+        public int aPressIntervalMs = 500;          // A連打の間隔
+
+        // クエスト開始後のBC待機
+        public int bcStartWaitMs = 3000;            // BCロード完了待ち
+
+        // BC→エリア4移動
+        public int bcToArea4TravelMs = 5000;        // ダッシュ時間
+
+        // エリア4ロード
+        public int areaLoadWaitMs = 5000;           // エリア切替ロード待機
+
+        // エリア4内移動（採掘ポイント前）
+        public int area4InnerMoveMs = 2000;         // エリア境界から採掘ポイントまで
+
+        // 採掘
+        public int diggingAPressCount = 10;         // ピッケル1本で最大採掘回数
+        public int diggingAPressIntervalMs = 300;   // 採掘アクション間隔
+
+        // モドリ玉使用
+        public int modoriDaArrowDownCount = 0;      // メニューでアイテム欄に移動するまでの↓回数（実機調整）
+        public int modoriDaUseWaitMs = 5000;        // モドリ玉使用後BC帰還までの待機
+
+        // BC内納品ボックス移動
+        public int deliveryBoxTravelMs = 2000;      // BC帰還後、納品ボックスへ移動
+        public int deliveryAPressCount = 8;         // 納品A連打回数
+
+        // 報酬画面〜結果画面
+        public int rewardScreenAPressCount = 20;    // 報酬画面でのA連打回数（結果画面まで戻る）
+
+        public QuestSketchParams() {}
+    }
+
+    /**
+     * クエスト自動周回Arduinoスケッチを生成する。
+     * @param p パラメータ
+     * @return 生成されたC++スケッチコード
+     */
+    public static String generateQuestSketch(QuestSketchParams p) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("// ================================================================\n");
+        sb.append("// MHXX クエスト自動周回スケッチ (G★2 火山の採集ツアー)\n");
+        sb.append("// ================================================================\n");
+        sb.append("// 実行前提:\n");
+        sb.append("//   1. 集会所受付でG★2「火山の採集ツアー」を1回クリアしておく\n");
+        sb.append("//   2. クエスト結果画面でこのスケッチを搭載したArduinoを接続\n");
+        sb.append("//   3. アイテムポーチに「モドリ玉」が入っていること\n");
+        sb.append("//   4. ピッケル（鉄/グレート）を複数本所持していること\n");
+        sb.append("//   5. クーラードリンクの所持を推奨（火山は灼熱エリアあり）\n");
+        sb.append("//   6. オトモはなし（お守り入手率を上げるため）\n");
+        sb.append("//\n");
+        sb.append("// 落とし穴対策:\n");
+        sb.append("//   - setup()で十分にB連打してSwitch認識を待つ（10回）\n");
+        sb.append("//   - 各フェーズ開始時にB連打してメニュー/ダイアログをクリア\n");
+        sb.append("//   - エリア境界でのA押下は複数回（空振り対策）\n");
+        sb.append("//   - 採掘後にB連打（「ピッケルが壊れた」等のメッセージクリア）\n");
+        sb.append("//   - 報酬画面の終盤はB連打（「鑑定する」誤爆を防止）\n");
+        sb.append("//\n");
+        sb.append("// 注意:\n");
+        sb.append("//   デフォルトのタイミング値は机上推定値。実機で試しながら調整すること。\n");
+        sb.append("//   特に移動時間・採掘位置・モドリ玉操作は機体個体差があるため要調整。\n");
+        sb.append("// ================================================================\n");
+        sb.append("#include <NintendoSwitchControlLibrary.h>\n");
+        sb.append("\n");
+        sb.append("void setup() {\n");
+        sb.append("  // 誤動作防止：Switchがマイコンを認識するまで十分にB連打（10回）\n");
+        sb.append("  pushButton(Button::B, 500, 10);\n");
+        sb.append("}\n");
+        sb.append("\n");
+        sb.append("void loop() {\n");
+        sb.append("  // ---- フェーズ0: メニュー/ダイアログをBでクリア（フェーズ間ガード） ----\n");
+        sb.append("  pushButton(Button::B, 200, 3);\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ1: クエスト結果画面 → 次クエスト受注 → 出発 ----\n");
+        sb.append("  // 報酬受取〜受注画面〜出発までをAボタン連打で進行\n");
+        sb.append("  pushButton(Button::A, ").append(p.aPressIntervalMs)
+                .append(", ").append(p.resultScreenAPressCount).append(");\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ2: BCロード待機 ----\n");
+        sb.append("  delay(").append(p.bcStartWaitMs).append(");\n");
+        sb.append("  // フェーズ開始前のクリア\n");
+        sb.append("  pushButton(Button::B, 200, 2);\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ3: BC → エリア4 へダッシュ ----\n");
+        sb.append("  // 左スティック上 + Rボタン（ダッシュ）\n");
+        sb.append("  tiltLeftStick(Stick::NEUTRAL, Stick::MIN, ").append(p.bcToArea4TravelMs)
+                .append(", Button::R);\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ4: エリア境界でA（複数回、空振り対策） → エリア切替ロード ----\n");
+        sb.append("  pushButton(Button::A, 300, 3);\n");
+        sb.append("  delay(").append(p.areaLoadWaitMs).append(");\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ5: エリア4内で採掘ポイントへ前進 ----\n");
+        sb.append("  // フェーズ開始前のクリア\n");
+        sb.append("  pushButton(Button::B, 200, 2);\n");
+        sb.append("  tiltLeftStick(Stick::NEUTRAL, Stick::MIN, ").append(p.area4InnerMoveMs).append(");\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ6: 採掘（A連打） ----\n");
+        sb.append("  pushButton(Button::A, ").append(p.diggingAPressIntervalMs)
+                .append(", ").append(p.diggingAPressCount).append(");\n");
+        sb.append("  // 採掘後のメッセージクリア（ピッケル破損・採掘完了など）\n");
+        sb.append("  pushButton(Button::B, 200, 5);\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ7: モドリ玉使用でBCへ帰還 ----\n");
+        sb.append("  // メニューを開く\n");
+        sb.append("  pushButton(Button::PLUS, 800);\n");
+        for (int i = 0; i < p.modoriDaArrowDownCount; i++) {
+            sb.append("  pushHat(Hat::DOWN, 200);\n");
+        }
+        sb.append("  // TODO: 実機で「アイテム」→「モドリ玉」までの↓回数を合わせる\n");
+        sb.append("  pushButton(Button::A, 500);  // アイテム選択\n");
+        sb.append("  pushButton(Button::A, 500);  // モドリ玉使用\n");
+        sb.append("  pushButton(Button::A, 500);  // 使用確認\n");
+        sb.append("  delay(").append(p.modoriDaUseWaitMs).append(");\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ8: BC内で納品ボックスへ移動 ----\n");
+        sb.append("  // フェーズ開始前のクリア（モドリ玉のメッセージなど）\n");
+        sb.append("  pushButton(Button::B, 200, 3);\n");
+        sb.append("  tiltLeftStick(Stick::NEUTRAL, Stick::MIN, ").append(p.deliveryBoxTravelMs).append(");\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ9: 納品ボックスでネコタクチケット納品 ----\n");
+        sb.append("  pushButton(Button::A, ").append(p.aPressIntervalMs)
+                .append(", ").append(p.deliveryAPressCount).append(");\n");
+        sb.append("\n");
+        sb.append("  // ---- フェーズ10: 報酬画面 → 結果画面（次ループへ） ----\n");
+        sb.append("  // 前半はA連打（報酬表示を進める）\n");
+        int firstHalf = Math.max(p.rewardScreenAPressCount / 2, 1);
+        int secondHalf = Math.max(p.rewardScreenAPressCount - firstHalf, 1);
+        sb.append("  pushButton(Button::A, ").append(p.aPressIntervalMs)
+                .append(", ").append(firstHalf).append(");\n");
+        sb.append("  // 後半はB連打（「鑑定する」誤爆を防止しながら画面を進める）\n");
+        sb.append("  pushButton(Button::B, ").append(p.aPressIntervalMs)
+                .append(", ").append(secondHalf).append(");\n");
+        sb.append("\n");
+        sb.append("  // ループ末尾のクリア\n");
+        sb.append("  pushButton(Button::B, 200, 2);\n");
+        sb.append("  delay(500);\n");
+        sb.append("}\n");
+        return sb.toString();
     }
 }

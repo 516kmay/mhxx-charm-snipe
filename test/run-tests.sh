@@ -20,4 +20,12 @@ echo "=== Running AppraiseTimerTest ==="
 java -Dfile.encoding=UTF-8 -cp build AppraiseTimerTest
 
 echo ""
+echo "=== Running QuestSketchTest ==="
+java -Dfile.encoding=UTF-8 -cp build QuestSketchTest
+
+echo ""
+echo "=== Running ComboSnipeTest ==="
+java -Dfile.encoding=UTF-8 -cp build ComboSnipeTest
+
+echo ""
 echo "=== All tests passed ==="

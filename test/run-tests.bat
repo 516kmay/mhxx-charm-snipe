@@ -35,5 +35,15 @@ java -Dfile.encoding=UTF-8 -cp build AppraiseTimerTest
 if %ERRORLEVEL% neq 0 exit /b 1
 
 echo.
+echo === Running QuestSketchTest ===
+java -Dfile.encoding=UTF-8 -cp build QuestSketchTest
+if %ERRORLEVEL% neq 0 exit /b 1
+
+echo.
+echo === Running CombinationTest ===
+java -Dfile.encoding=UTF-8 -cp build CombinationTest
+if %ERRORLEVEL% neq 0 exit /b 1
+
+echo.
 echo === All tests passed ===
 pause
