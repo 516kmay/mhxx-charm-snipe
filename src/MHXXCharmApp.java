@@ -3009,12 +3009,13 @@ public class MHXXCharmApp extends JFrame {
         sb.append("// 動作:\n");
         sb.append("//   1. ゲーム起動 → A連打 → ゲームモード選択画面\n");
         sb.append("//   2. Continue連打で乱数を大量消費\n");
-        sb.append("//   3. Continue決定 → ロード（自宅から再開）\n");
-        sb.append("//   4. +ボタンでメニュー → 上から3番目「リストから調合」 → アイテムリスト画面\n");
-        sb.append("//   5. ↓キーでLv2通常弾までカーソル移動 → A決定で調合確認画面\n");
-        sb.append("//   6. A長押しで連続調合\n");
-        sb.append("//   7. 30秒録画（キャプチャーボタン長押し）\n");
-        sb.append("//   8. HOMEボタンでゲーム中断\n");
+        sb.append("//   3. Continue決定 → ロード（ココット村）\n");
+        sb.append("//   4. ワールドマップ → 自宅へ移動（X→A×2）\n");
+        sb.append("//   5. +ボタンでメニュー → 上から3番目「リストから調合」 → アイテムリスト画面\n");
+        sb.append("//   6. ↓キーでLv2通常弾までカーソル移動 → A決定で調合確認画面\n");
+        sb.append("//   7. A長押しで連続調合\n");
+        sb.append("//   8. 30秒録画（キャプチャーボタン長押し）\n");
+        sb.append("//   9. HOMEボタンでゲーム中断\n");
         sb.append("//\n");
         sb.append("// ここでArduinoを外し、録画を確認して累積弾数をツールに入力。\n");
         sb.append("// 現在フレームを特定後、コード2のwait_msを設定して書き込む。\n");
@@ -3070,20 +3071,30 @@ public class MHXXCharmApp extends JFrame {
         }
 
         // Step 3: Continue決定 → ロード
-        sb.append("    // Step 3: Continue決定 → ロード\n");
+        sb.append("    // Step 3: Continue決定 → ロード（ココット村）\n");
         sb.append("    pushButton(Button::A, 250, 4);\n");
         sb.append("    delay(9500);\n\n");
 
-        // Step 4: +ボタンメニューから「リストから調合」を選択 → アイテムリスト画面
-        sb.append("    // Step 4: +ボタンでメニューを開く → 「リストから調合」を選択\n");
+        // Step 4: 自宅へ移動（X→A×2）
+        sb.append("    // Step 4: 自宅へ移動（ワールドマップ → 自宅選択）\n");
+        sb.append("    pushButton(Button::X, 250);\n");
+        sb.append("    pushButton(Button::A, 250, 2);\n");
+        sb.append("    delay(3000); // 自宅へのロード待ち\n\n");
+
+        // Step 5: +ボタンメニューから「リストから調合」を選択 → アイテムリスト画面
+        sb.append("    // Step 5: +ボタンでメニューを開く → 「リストから調合」を選択\n");
         sb.append("    //   メニュー上から3番目が「リストから調合」\n");
+        sb.append("    //   メニュー認識失敗対策: 事前にBで残留入力クリア + 開いた後に安定待ち\n");
+        sb.append("    pushButton(Button::B, 200, 3);    // 残留入力クリア\n");
+        sb.append("    delay(500);\n");
         sb.append("    pushButton(Button::PLUS, 500);    // メニューを開く\n");
+        sb.append("    delay(500);                       // メニュー表示の安定待ち\n");
         sb.append("    pushHat(Hat::DOWN, 100, 2);       // 上から3番目に移動\n");
         sb.append("    pushButton(Button::A, 500);       // 「リストから調合」を選択\n");
         sb.append("    delay(1500);                      // アイテムリスト画面のロード待ち\n\n");
 
-        // Step 5: アイテムリストでLv2通常弾までカーソル移動 → 決定で調合確認画面
-        sb.append("    // Step 5: アイテムリストでLv2通常弾を選択 → 調合確認画面\n");
+        // Step 6: アイテムリストでLv2通常弾までカーソル移動 → 決定で調合確認画面
+        sb.append("    // Step 6: アイテムリストでLv2通常弾を選択 → 調合確認画面\n");
         sb.append("    //   実機でLv2通常弾までの↓キー回数を調整すること（現在: ")
                 .append(downKeysToLv2).append("回）\n");
         if (downKeysToLv2 > 0) {
@@ -3094,20 +3105,20 @@ public class MHXXCharmApp extends JFrame {
         }
         sb.append("    pushButton(Button::A, 1000);      // Aで決定 → 調合確認画面\n\n");
 
-        // Step 6: A長押しで連続調合（10秒間）
-        sb.append("    // Step 6: A長押しで連続調合（10秒間）\n");
+        // Step 7: A長押しで連続調合（10秒間）
+        sb.append("    // Step 7: A長押しで連続調合（10秒間）\n");
         sb.append("    // 重要: A長押しで連続調合する（A連打ではゲーム側で連続発動しないため）\n");
         sb.append("    // 10秒間で実機の調合速度に応じて5〜6回程度調合される想定\n");
         sb.append("    holdButton(Button::A, 10000);\n");
         sb.append("    pushButton(Button::B, 250, 3);   // 調合メニューを閉じる\n\n");
 
-        // Step 7: 30秒録画
-        sb.append("    // Step 7: 30秒録画（キャプチャーボタン長押し）\n");
+        // Step 8: 30秒録画
+        sb.append("    // Step 8: 30秒録画（キャプチャーボタン長押し）\n");
         sb.append("    holdButton(Button::CAPTURE, 1500);\n");
         sb.append("    delay(3000); // 録画保存待ち\n\n");
 
-        // Step 8: HOMEボタンでゲーム中断
-        sb.append("    // Step 8: HOMEボタンでゲーム中断\n");
+        // Step 9: HOMEボタンでゲーム中断
+        sb.append("    // Step 9: HOMEボタンでゲーム中断\n");
         sb.append("    pushButton(Button::HOME, 500);\n");
         sb.append("    // ここでArduinoを外す。録画確認→コード2へ。\n");
         sb.append("}\n\n");
