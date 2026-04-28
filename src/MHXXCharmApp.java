@@ -1445,7 +1445,7 @@ public class MHXXCharmApp extends JFrame {
         JPanel settings = titled("周辺お守り表示");
         settings.setLayout(new FlowLayout(FlowLayout.LEFT, 8, 8));
         settings.add(label("フレーム位置:"));
-        aroundFrame = makeField("4723", 10);
+        aroundFrame = makeField("", 10);
         aroundFrame.addActionListener(e -> showAround());
         settings.add(aroundFrame);
         settings.add(label("前後範囲:"));
@@ -3874,7 +3874,7 @@ public class MHXXCharmApp extends JFrame {
         settings.add(descRow);
 
         // 個数列入力
-        JTextField countsField = makeField("0 2 4 7 10 13 16 18 22 25 28 30 32 35 39 42 45", 60);
+        JTextField countsField = makeField("", 60);
         countsField.setToolTipText("累積弾数（0始まり）or 個数列（2,3,4）を入力。自動判定します");
 
         // クリック入力UI（録画を見ながらボタンで累積）
@@ -3943,8 +3943,13 @@ public class MHXXCharmApp extends JFrame {
             clickStatusLabel.setText("（" + rolls + "回入力, 累積=" 
                 + (cumulativeList.isEmpty() ? "-" : cumulativeList.get(cumulativeList.size() - 1)) + "）");
         };
-        // 初期同期
-        syncToField.run();
+        // 初期同期: countsFieldは空欄で開始したいので書き換えず、ステータスラベルのみ更新
+        {
+            int rolls = cumulativeList.size() - 1;
+            if (rolls < 0) rolls = 0;
+            clickStatusLabel.setText("（" + rolls + "回入力, 累積=" 
+                + (cumulativeList.isEmpty() ? "-" : cumulativeList.get(cumulativeList.size() - 1)) + "）");
+        }
 
         java.util.function.IntConsumer addAmount = amount -> {
             int last = cumulativeList.isEmpty() ? 0 : cumulativeList.get(cumulativeList.size() - 1);
