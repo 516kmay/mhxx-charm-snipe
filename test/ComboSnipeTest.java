@@ -145,7 +145,7 @@ public class ComboSnipeTest {
             assertContains(code, "CAPTURE", "キャプチャーボタン（録画）");
             assertContains(code, "HOME", "HOMEボタン（ゲーム中断）");
             // A長押しで連続調合する命令が入っているか（10秒固定）
-            assertContains(code, "holdButton(Button::A, 10000)", "A長押し10秒固定");
+            assertContains(code, "holdButton(Button::A, 30000)", "A長押し30秒固定");
             // リスト画面に遷移するためのメニュー操作
             assertContains(code, "Button::PLUS", "+ボタンでメニューを開く");
             // 「リストから調合」を選んだ後の決定A

@@ -548,6 +548,13 @@ public class MHXXCharmApp extends JFrame {
     JLabel[] rewardLabels;
     JTextField rewardSearchRange;
     JTextField rewardThreshold;  // 追加報酬閾値（通常22、激運/幸運で変動）
+
+    // 調合スナイプ系（保存・復元のためインスタンスフィールド化）
+    JTextField comboCountsField;       // 累積弾数 or 個数列
+    JTextField comboTargetFField;      // 目標F（調合スナイプタブ）
+    JTextField comboNcField;           // Continue回数（調合Arduinoタブ）
+    JTextField comboNumField;          // 調合回数（目安）
+    JTextField comboDownKeysField;     // Lv2弾までの↓数
     DefaultTableModel rewardModel;
     JTable rewardTable;
     JLabel rewardCalcResult;
@@ -671,6 +678,16 @@ public class MHXXCharmApp extends JFrame {
             props.setProperty("arduino.c", arduinoC.getText());
             props.setProperty("arduino.fc", arduinoFc.getText());
             props.setProperty("arduino.target", arduinoTarget.getText());
+
+            // 周辺表示・報酬逆算・調合スナイプ系
+            if (aroundFrame != null) props.setProperty("around.frame", aroundFrame.getText());
+            if (rewardThreshold != null) props.setProperty("reward.threshold", rewardThreshold.getText());
+            if (comboCountsField != null) props.setProperty("combo.counts", comboCountsField.getText());
+            if (comboTargetFField != null) props.setProperty("combo.targetF", comboTargetFField.getText());
+            if (comboNcField != null) props.setProperty("combo.nc", comboNcField.getText());
+            if (comboNumField != null) props.setProperty("combo.num", comboNumField.getText());
+            if (comboDownKeysField != null) props.setProperty("combo.downKeys", comboDownKeysField.getText());
+
             props.setProperty("window.width", String.valueOf(getWidth()));
             props.setProperty("window.height", String.valueOf(getHeight()));
             props.setProperty("window.x", String.valueOf(getX()));
@@ -720,6 +737,22 @@ public class MHXXCharmApp extends JFrame {
             if (!savedFc.isEmpty()) arduinoFc.setText(savedFc);
             String savedTarget = props.getProperty("arduino.target", "");
             if (!savedTarget.isEmpty()) arduinoTarget.setText(savedTarget);
+
+            // 周辺表示・報酬逆算・調合スナイプ系の復元
+            String savedAroundFrame = props.getProperty("around.frame", "");
+            if (aroundFrame != null && !savedAroundFrame.isEmpty()) aroundFrame.setText(savedAroundFrame);
+            String savedRewardThreshold = props.getProperty("reward.threshold", "");
+            if (rewardThreshold != null && !savedRewardThreshold.isEmpty()) rewardThreshold.setText(savedRewardThreshold);
+            String savedComboCounts = props.getProperty("combo.counts", "");
+            if (comboCountsField != null && !savedComboCounts.isEmpty()) comboCountsField.setText(savedComboCounts);
+            String savedComboTargetF = props.getProperty("combo.targetF", "");
+            if (comboTargetFField != null && !savedComboTargetF.isEmpty()) comboTargetFField.setText(savedComboTargetF);
+            String savedComboNc = props.getProperty("combo.nc", "");
+            if (comboNcField != null && !savedComboNc.isEmpty()) comboNcField.setText(savedComboNc);
+            String savedComboNum = props.getProperty("combo.num", "");
+            if (comboNumField != null && !savedComboNum.isEmpty()) comboNumField.setText(savedComboNum);
+            String savedComboDownKeys = props.getProperty("combo.downKeys", "");
+            if (comboDownKeysField != null && !savedComboDownKeys.isEmpty()) comboDownKeysField.setText(savedComboDownKeys);
 
             int w = Integer.parseInt(props.getProperty("window.width", "1080"));
             int h = Integer.parseInt(props.getProperty("window.height", "800"));
@@ -2888,9 +2921,6 @@ public class MHXXCharmApp extends JFrame {
                 """.formatted(numContinue, numContinue) : "";
 
         var tail = """
-                    // 待機時間 (%d ms)
-                    waitWithKeepAlive(%d);
-
                     // Continue決定 → ロード
                     pushButton(Button::A, 250, 4);
                     delay(9500);
@@ -2902,17 +2932,23 @@ public class MHXXCharmApp extends JFrame {
                     SwitchControlLibrary().releaseButton(Button::R);
                     SwitchControlLibrary().sendReport();
 
-                    // マカ錬金投入
+                    // マカ錬金メニュー → 護石3個選択（投入確認ダイアログまで進める）
                     pushButton(Button::A, 100);
                     pushButton(Button::B, 250, 6);
                     pushButton(Button::A, 100);
                     pushHat(Hat::UP);
                     pushButton(Button::A, 10);
-                    pushButton(Button::A, 10);
+                    pushButton(Button::A, 10);    // 1番目の護石
                     pushHat(Hat::DOWN, 10);
-                    pushButton(Button::A, 10);
+                    pushButton(Button::A, 10);    // 2番目の護石
                     pushHat(Hat::DOWN, 10);
-                    pushButton(Button::A, 10);
+                    pushButton(Button::A, 10);    // 3番目の護石（→ 投入確認ダイアログ）
+                    delay(1000);                    // ダイアログ表示の安定待ち
+
+                    // 投入確認ダイアログで目標フレームまで待機 (%d ms)
+                    waitWithKeepAlive(%d);
+
+                    // A連打で投入確定（このタイミングで乱数決定）
                     pushButton(Button::A, 100, 2);
                     pushButton(Button::B, 100, 5);
 
@@ -3001,15 +3037,16 @@ public class MHXXCharmApp extends JFrame {
         sb.append("// MHXX 調合スナイプ - コード1 (フレーム消費 + 調合 + 録画)\n");
         sb.append("// ================================================================\n");
         sb.append("// 実行前提:\n");
-        sb.append("//   - ココット村でセーブ済み（自宅にいる状態でセーブ）\n");
-        sb.append("//   - ハリの実×16以上, カラの実×16以上, 調合書①入門編を所持\n");
-        sb.append("//   - オトモなし\n");
+        sb.append("//   ★ ココット村でセーブ済み（ロード後は村スタート → 自宅へ自動移動します）★\n");
+        sb.append("//   - ハリの実×15以上, カラの実×15以上, 調合書①入門編を所持\n");
+        sb.append("//   - オトモなし / ペットなし\n");
+        sb.append("//   - ルームサービス = モガの村の看板娘\n");
         sb.append("//   - Switchのアルバムに空きがあること（30秒録画用）\n");
         sb.append("//\n");
         sb.append("// 動作:\n");
         sb.append("//   1. ゲーム起動 → A連打 → ゲームモード選択画面\n");
         sb.append("//   2. Continue連打で乱数を大量消費\n");
-        sb.append("//   3. Continue決定 → ロード（ココット村）\n");
+        sb.append("//   3. Continue決定 → ロード（村スタート）\n");
         sb.append("//   4. ワールドマップ → 自宅へ移動（X→A×2）\n");
         sb.append("//   5. +ボタンでメニュー → 上から3番目「リストから調合」 → アイテムリスト画面\n");
         sb.append("//   6. ↓キーでLv2通常弾までカーソル移動 → A決定で調合確認画面\n");
@@ -3077,6 +3114,7 @@ public class MHXXCharmApp extends JFrame {
 
         // Step 4: 自宅へ移動（X→A×2）
         sb.append("    // Step 4: 自宅へ移動（ワールドマップ → 自宅選択）\n");
+        sb.append("    //   ロード直後は村スタートのため、自宅まで移動する必要がある\n");
         sb.append("    pushButton(Button::X, 250);\n");
         sb.append("    pushButton(Button::A, 250, 2);\n");
         sb.append("    delay(3000); // 自宅へのロード待ち\n\n");
@@ -3105,11 +3143,11 @@ public class MHXXCharmApp extends JFrame {
         }
         sb.append("    pushButton(Button::A, 1000);      // Aで決定 → 調合確認画面\n\n");
 
-        // Step 7: A長押しで連続調合（10秒間）
-        sb.append("    // Step 7: A長押しで連続調合（10秒間）\n");
+        // Step 7: A長押しで連続調合（30秒間）
+        sb.append("    // Step 7: A長押しで連続調合（30秒間）\n");
         sb.append("    // 重要: A長押しで連続調合する（A連打ではゲーム側で連続発動しないため）\n");
-        sb.append("    // 10秒間で実機の調合速度に応じて5〜6回程度調合される想定\n");
-        sb.append("    holdButton(Button::A, 10000);\n");
+        sb.append("    // 30秒間で実機の調合速度に応じて15〜25回程度調合される想定\n");
+        sb.append("    holdButton(Button::A, 30000);\n");
         sb.append("    pushButton(Button::B, 250, 3);   // 調合メニューを閉じる\n\n");
 
         // Step 8: 30秒録画
@@ -3144,10 +3182,11 @@ public class MHXXCharmApp extends JFrame {
         sb.append("//\n");
         sb.append("// 動作:\n");
         sb.append("//   1. HOMEボタンでゲーム復帰（自宅にいる状態）\n");
-        sb.append("//   2. 設定した時間だけ待機\n");
-        sb.append("//   3. ルームサービス経由でマカ錬金投入\n");
-        sb.append("//   4. ケルビマラソン（鑑定用）\n");
-        sb.append("//   5. 自宅で鑑定確認\n");
+        sb.append("//   2. ルームサービス→マカ錬金→護石3個選択（投入確認ダイアログまで）\n");
+        sb.append("//   3. 投入確認ダイアログで設定時間だけ待機\n");
+        sb.append("//   4. A連打で投入確定（このタイミングで乱数決定）\n");
+        sb.append("//   5. ケルビマラソン（鑑定用）\n");
+        sb.append("//   6. 自宅で鑑定確認\n");
         sb.append("// ================================================================\n");
         sb.append("#include <NintendoSwitchControlLibrary.h>\n\n");
 
@@ -3182,32 +3221,33 @@ public class MHXXCharmApp extends JFrame {
         sb.append("    pushButton(Button::HOME, 1000);\n");
         sb.append("    delay(2000); // ゲーム復帰待ち\n\n");
 
-        // Step 2: 待機
-        sb.append("    // Step 2: 目標フレームまで待機 (%d ms)\n".formatted(waitMs));
-        sb.append("    waitWithKeepAlive(wait_ms);\n\n");
-
-        // Step 3: ルームサービスでマカ錬金
-        sb.append("    // Step 3: ルームサービス経由でマカ錬金投入\n");
-        sb.append("    // （自宅にいる前提。ルームサービスに話しかける）\n");
+        // Step 2: マカ錬金メニューを進めて護石3個選択（投入確認ダイアログまで）
+        sb.append("    // Step 2: ルームサービス → マカ錬金 → 護石3個選択\n");
+        sb.append("    // 投入確認ダイアログまで進めてからStep 3で待機する\n");
         sb.append("    tiltLeftStick(Stick::MAX, Stick::NEUTRAL, 700);\n");
-        sb.append("    pushButton(Button::A, 250, 2); // 話しかけ\n");
-        sb.append("    pushButton(Button::B, 250, 2); // 会話スキップ\n");
-        sb.append("    delay(100);\n");
-        sb.append("    pushButton(Button::A, 250);    // メニュー\n");
-        sb.append("    pushHat(Hat::DOWN, 50, 3);     // マカ錬金に移動\n");
-        sb.append("    pushButton(Button::A, 250);    // マカ錬金選択\n");
+        sb.append("    pushButton(Button::A, 100); // 話しかけ\n");
+        sb.append("    pushButton(Button::B, 250, 6); // 会話スキップ\n");
+        sb.append("    pushButton(Button::A, 100);    // メニュー\n");
         sb.append("    pushHat(Hat::UP);              // マカフシギ錬金術\n");
         sb.append("    pushButton(Button::A, 10);\n");
         sb.append("    pushButton(Button::A, 10);     // 1番目の護石\n");
         sb.append("    pushHat(Hat::DOWN, 10);\n");
         sb.append("    pushButton(Button::A, 10);     // 2番目の護石\n");
         sb.append("    pushHat(Hat::DOWN, 10);\n");
-        sb.append("    pushButton(Button::A, 10);     // 3番目の護石\n");
+        sb.append("    pushButton(Button::A, 10);     // 3番目の護石（→ 投入確認ダイアログ）\n");
+        sb.append("    delay(1000);                    // ダイアログ表示の安定待ち\n\n");
+
+        // Step 3: 投入確認ダイアログで待機
+        sb.append("    // Step 3: 投入確認ダイアログで目標フレームまで待機 (%d ms)\n".formatted(waitMs));
+        sb.append("    waitWithKeepAlive(wait_ms);\n\n");
+
+        // Step 4: A連打で投入確定
+        sb.append("    // Step 4: A連打で投入確定（このタイミングで乱数決定）\n");
         sb.append("    pushButton(Button::A, 100, 2); // 投入確定\n");
         sb.append("    pushButton(Button::B, 100, 5); // 会話終了\n\n");
 
-        // Step 4: ケルビマラソン
-        sb.append("    // Step 4: ケルビマラソン（鑑定用クエスト）\n");
+        // Step 5: ケルビマラソン
+        sb.append("    // Step 5: ケルビマラソン（鑑定用クエスト）\n");
         sb.append("    // ココット村受付嬢へダッシュ\n");
         sb.append("    pushButton(Button::B, 200, 3); // メニュークリア\n");
         sb.append("    SwitchControlLibrary().pressButton(Button::R);\n");
@@ -3254,8 +3294,8 @@ public class MHXXCharmApp extends JFrame {
         sb.append("    pushButton(Button::A, 250);\n");
         sb.append("    delay(7900);\n\n");
 
-        // Step 5: 自宅で鑑定
-        sb.append("    // Step 5: 自宅で鑑定\n");
+        // Step 6: 自宅で鑑定
+        sb.append("    // Step 6: 自宅で鑑定\n");
         sb.append("    pushButton(Button::X, 250);\n");
         sb.append("    pushButton(Button::A, 250, 2);\n");
         sb.append("    delay(2000);\n");
@@ -3863,9 +3903,10 @@ public class MHXXCharmApp extends JFrame {
         descRow.setOpaque(false);
         JLabel desc = new JLabel(
             "<html><body style='width:800px; color:#8888aa;'>" +
-            "ハリの実 + カラの実 を<b>各16個以上</b>用意し、調合書を持ってアイテムボックス内で<br>" +
+            "<b>★ココット村でセーブ必須★</b>（ロード後は村スタート → コードが自宅へ移動します）<br>" +
+            "ハリの実 + カラの実 を<b>各15個以上</b>用意し、調合書を持って自宅で<br>" +
             "<b>Lv2通常弾を連続調合</b>。Switch録画で弾数の変化を記録し、現在フレームを逆算。<br>" +
-            "場所は<b>ココット村自宅</b>推奨（ルームサービス=モガの村の看板娘、ペット/オトモなし）。<br>" +
+            "前提: ルームサービス=モガの村の看板娘、ペット/オトモなし。<br>" +
             "<b>入力形式:</b> 累積弾数（0始まり、例: <code>0 2 4 7 10 13 16</code>）<br>" +
             "　　 or 個数列（各回の調合数、例: <code>2,2,3,3,3,3</code>）— 自動判定します。" +
             "</body></html>");
@@ -3874,8 +3915,8 @@ public class MHXXCharmApp extends JFrame {
         settings.add(descRow);
 
         // 個数列入力
-        JTextField countsField = makeField("", 60);
-        countsField.setToolTipText("累積弾数（0始まり）or 個数列（2,3,4）を入力。自動判定します");
+        comboCountsField = makeField("", 60);
+        comboCountsField.setToolTipText("累積弾数（0始まり）or 個数列（2,3,4）を入力。自動判定します");
 
         // クリック入力UI（録画を見ながらボタンで累積）
         JPanel clickRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
@@ -3905,7 +3946,7 @@ public class MHXXCharmApp extends JFrame {
         JPanel row1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         row1.setOpaque(false);
         row1.add(label("累積弾数 or 個数列:"));
-        row1.add(countsField);
+        row1.add(comboCountsField);
         settings.add(row1);
 
         // クリック入力のロジック
@@ -3914,7 +3955,7 @@ public class MHXXCharmApp extends JFrame {
         cumulativeList.add(0); // 初期値0
         // 既にデフォルト値がテキストフィールドにあるので、それを初期累積列としてパース
         try {
-            String defaultText = countsField.getText().trim();
+            String defaultText = comboCountsField.getText().trim();
             String[] defaultParts = defaultText.split("[,，\\s、]+");
             int[] parsed = new int[defaultParts.length];
             for (int i = 0; i < defaultParts.length; i++) parsed[i] = Integer.parseInt(defaultParts[i].trim());
@@ -3937,13 +3978,13 @@ public class MHXXCharmApp extends JFrame {
                 if (i > 0) sb.append(' ');
                 sb.append(cumulativeList.get(i));
             }
-            countsField.setText(sb.toString());
+            comboCountsField.setText(sb.toString());
             int rolls = cumulativeList.size() - 1;
             if (rolls < 0) rolls = 0;
             clickStatusLabel.setText("（" + rolls + "回入力, 累積=" 
                 + (cumulativeList.isEmpty() ? "-" : cumulativeList.get(cumulativeList.size() - 1)) + "）");
         };
-        // 初期同期: countsFieldは空欄で開始したいので書き換えず、ステータスラベルのみ更新
+        // 初期同期: comboCountsFieldは空欄で開始したいので書き換えず、ステータスラベルのみ更新
         {
             int rolls = cumulativeList.size() - 1;
             if (rolls < 0) rolls = 0;
@@ -3987,28 +4028,28 @@ public class MHXXCharmApp extends JFrame {
             public void actionPerformed(java.awt.event.ActionEvent e) {
                 // テキストフィールドにフォーカスがある時は通常入力を優先
                 java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
-                if (focused == countsField) return;
+                if (focused == comboCountsField) return;
                 addAmount.accept(2);
             }
         });
         actionMap.put("add3", new AbstractAction() {
             public void actionPerformed(java.awt.event.ActionEvent e) {
                 java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
-                if (focused == countsField) return;
+                if (focused == comboCountsField) return;
                 addAmount.accept(3);
             }
         });
         actionMap.put("add4", new AbstractAction() {
             public void actionPerformed(java.awt.event.ActionEvent e) {
                 java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
-                if (focused == countsField) return;
+                if (focused == comboCountsField) return;
                 addAmount.accept(4);
             }
         });
         actionMap.put("undo", new AbstractAction() {
             public void actionPerformed(java.awt.event.ActionEvent e) {
                 java.awt.Component focused = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
-                if (focused == countsField) return;
+                if (focused == comboCountsField) return;
                 if (cumulativeList.size() > 1) {
                     cumulativeList.remove(cumulativeList.size() - 1);
                     syncToField.run();
@@ -4017,9 +4058,9 @@ public class MHXXCharmApp extends JFrame {
         });
 
         // テキストフィールド側で手入力した時は内部リストを再同期する
-        countsField.addFocusListener(new java.awt.event.FocusAdapter() {
+        comboCountsField.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override public void focusLost(java.awt.event.FocusEvent e) {
-                String input = countsField.getText().trim();
+                String input = comboCountsField.getText().trim();
                 String[] parts = input.split("[,，\\s、]+");
                 java.util.List<Integer> newList = new java.util.ArrayList<>();
                 try {
@@ -4056,8 +4097,8 @@ public class MHXXCharmApp extends JFrame {
             "<html>検索するフレーム数の上限。<br>" +
             "目標Fを入力した場合は自動で「目標F+マージン」に上書きされる。<br>" +
             "範囲が広すぎると偽マッチが大量発生する点に注意。</html>");
-        JTextField targetFField = makeField("", 12);
-        targetFField.setToolTipText(
+        comboTargetFField = makeField("", 12);
+        comboTargetFField.setToolTipText(
             "<html><b>狙うお守りのフレーム位置（任意）</b><br>" +
             "入力すると検索範囲を「目標F+10万」に自動設定し、偽マッチを大幅削減。<br>" +
             "候補ハイライト（目標F以下で最も近い候補を緑）にも使う。</html>");
@@ -4066,7 +4107,7 @@ public class MHXXCharmApp extends JFrame {
         row2.add(label("検索範囲:"));
         row2.add(rangeField);
         row2.add(label("F  目標F:"));
-        row2.add(targetFField);
+        row2.add(comboTargetFField);
         JButton searchBtn = makeButton("▶ 逆算開始", ACCENT);
         row2.add(searchBtn);
         JButton cancelBtn = makeButton("■ 中止", BTN_BG);
@@ -4084,7 +4125,7 @@ public class MHXXCharmApp extends JFrame {
         // 入力変化に応じた推定候補数の更新
         Runnable updateEstimate = () -> {
             try {
-                String input = countsField.getText().trim();
+                String input = comboCountsField.getText().trim();
                 String[] parts = input.split("[,，\\s、]+");
                 int observed;
                 // 累積列か個数列かを推定。0始まりなら累積（観測数 = 要素数 - 1）
@@ -4094,7 +4135,7 @@ public class MHXXCharmApp extends JFrame {
                     observed = parts.length;
                 }
                 long range;
-                String tgtStr = targetFField.getText().trim();
+                String tgtStr = comboTargetFField.getText().trim();
                 if (!tgtStr.isEmpty()) {
                     try {
                         long tgt = Long.parseLong(tgtStr);
@@ -4119,15 +4160,15 @@ public class MHXXCharmApp extends JFrame {
                 estimateLabel.setText("（入力を読み取れません）");
             }
         };
-        countsField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        comboCountsField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             public void insertUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
             public void removeUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
             public void changedUpdate(javax.swing.event.DocumentEvent e) { updateEstimate.run(); }
         });
-        targetFField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        comboTargetFField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             public void insertUpdate(javax.swing.event.DocumentEvent e) { 
                 // 目標F入力時、検索範囲を自動更新
-                String tgtStr = targetFField.getText().trim();
+                String tgtStr = comboTargetFField.getText().trim();
                 if (!tgtStr.isEmpty()) {
                     try {
                         long tgt = Long.parseLong(tgtStr);
@@ -4139,7 +4180,7 @@ public class MHXXCharmApp extends JFrame {
                 updateEstimate.run();
             }
             public void removeUpdate(javax.swing.event.DocumentEvent e) { 
-                String tgtStr = targetFField.getText().trim();
+                String tgtStr = comboTargetFField.getText().trim();
                 if (!tgtStr.isEmpty()) {
                     try {
                         long tgt = Long.parseLong(tgtStr);
@@ -4209,7 +4250,7 @@ public class MHXXCharmApp extends JFrame {
 
             // 個数列のパース（カンマ・スペース・日本語句読点も許容）
             // 累積列（0始まり、単調増加）と個数列（各要素2〜4）を自動判定
-            String input = countsField.getText().trim();
+            String input = comboCountsField.getText().trim();
             String[] parts = input.split("[,，\\s、]+");
             int[] counts;
             try {
@@ -4308,7 +4349,7 @@ public class MHXXCharmApp extends JFrame {
 
                     // 目標F取得（任意）
                     Long targetF = null;
-                    String tgtStr = targetFField.getText().trim();
+                    String tgtStr = comboTargetFField.getText().trim();
                     if (!tgtStr.isEmpty()) {
                         try { targetF = Long.parseLong(tgtStr); } catch (NumberFormatException ignored) {}
                     }
@@ -4367,12 +4408,15 @@ public class MHXXCharmApp extends JFrame {
                         summaryLabel.setForeground(SUCCESS);
                     } else if (fBestCandidate != null) {
                         // 目標F指定あり: 推奨候補を強調
+                        // ただし複数候補がある時は偽マッチ警告
                         summaryLabel.setText(String.format(
-                            "%d件の候補 — 推奨: %d F（目標 %d F 以下で最も近い、緑色行）",
+                            "<html>%d件の候補 — 推奨: <b>%d F</b>（目標 %d F 以下で最も近い、緑色行）" +
+                            "　<span style='color:#cc8888;'>※複数候補がある時は偽マッチ含む可能性。観測数を増やすと絞り込めます</span></html>",
                             results.size(), fBestCandidate, fTargetF));
                         summaryLabel.setForeground(SUCCESS);
                     } else {
-                        summaryLabel.setText(results.size() + "件の候補（目標Fを入力すると推奨候補をハイライトします）");
+                        summaryLabel.setText("<html>" + results.size() + "件の候補（目標Fを入力すると推奨候補をハイライトします）" +
+                            "　<span style='color:#cc8888;'>※候補が多い時は観測数を増やすことを推奨</span></html>");
                         summaryLabel.setForeground(WARN);
                     }
                 });
@@ -4408,10 +4452,11 @@ public class MHXXCharmApp extends JFrame {
         descRow.setOpaque(false);
         descRow.add(new JLabel(
             "<html><body style='width:800px; color:#8888aa;'>" +
+            "<b>★前提: ココット村でセーブ必須★</b>（ロード後は村スタート → コード1が自宅へ移動）<br>" +
             "<b>ワークフロー（全3ステップ）:</b><br>" +
-            "① <b>コード1</b>をArduinoに書き込み→実行: Continue連打→ゲーム開始→自宅で調合→30秒録画→HOME中断<br>" +
+            "① <b>コード1</b>をArduinoに書き込み→実行: Continue連打→自宅移動→調合→30秒録画→HOME中断<br>" +
             "② <b>手動</b>: 録画確認→累積弾数を「調合スナイプ」タブに入力→現在F特定→現在Fと目標Fを入力<br>" +
-            "③ <b>コード2</b>をArduinoに書き込み→実行: HOME復帰→待機→マカ錬金→ケルビ→鑑定" +
+            "③ <b>コード2</b>をArduinoに書き込み→実行: HOME復帰→マカ錬金準備→投入確認で待機→投入確定→ケルビ→鑑定" +
             "</body></html>"));
         settings.add(descRow);
 
@@ -4427,17 +4472,17 @@ public class MHXXCharmApp extends JFrame {
         JPanel c1Row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         c1Row.setOpaque(false);
         c1Row.add(label("Continue回数:"));
-        JTextField comboNcField = makeField("", 8);
+        comboNcField = makeField("", 8);
         comboNcField.setToolTipText("<html>Continue連打回数。目標Fが大きいほど多くする。<br>目安: 目標F ÷ 714</html>");
         c1Row.add(comboNcField);
         c1Row.add(label("  調合回数（目安）:"));
-        JTextField comboNumField = makeField("15", 5);
+        comboNumField = makeField("20", 5);
         comboNumField.setToolTipText(
             "<html>10秒のA長押しで実機が何回くらい調合するかの<b>目安</b>。<br>" +
             "（生成コードのA長押し時間は10秒固定。このフィールドはメモ用）</html>");
         c1Row.add(comboNumField);
         c1Row.add(label("  Lv2弾までの↓数:"));
-        JTextField comboDownKeysField = makeField("0", 4);
+        comboDownKeysField = makeField("0", 4);
         comboDownKeysField.setToolTipText(
             "<html>「リストから調合」を選んだ後、<br>" +
             "アイテムリスト画面でLv2通常弾までカーソルを移動するための↓キー回数。<br>" +
@@ -4590,7 +4635,7 @@ public class MHXXCharmApp extends JFrame {
     // Combo Snipe (調合スナイプ: Lv2通常弾の個数列から現在フレーム特定)
     //
     // 仕様 (サイファー氏 & apmnnn氏の調査より):
-    //   Lv2通常弾 = ハリの実 + カラの実（各16個以上用意）
+    //   Lv2通常弾 = ハリの実 + カラの実（各15個以上用意）
     //   調合書を持ってアイテムボックス内（ココット村自宅）で連続調合
     //   (val & 0xFFFF) % 100 の値で個数が決まる:
     //     0-24  → 2個
