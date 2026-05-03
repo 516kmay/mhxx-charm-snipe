@@ -4480,33 +4480,39 @@ public class MHXXCharmApp extends JFrame {
                     final Long fBestCandidate = bestCandidate;
 
                     // 行レンダラーで目標F近傍をハイライト
-                    comboTable.setDefaultRenderer(Object.class, new javax.swing.table.DefaultTableCellRenderer() {
+                    javax.swing.table.DefaultTableCellRenderer hilight = new javax.swing.table.DefaultTableCellRenderer() {
                         @Override
                         public java.awt.Component getTableCellRendererComponent(
                                 JTable table, Object value, boolean isSelected,
                                 boolean hasFocus, int row, int column) {
-                            java.awt.Component c = super.getTableCellRendererComponent(
+                            super.getTableCellRendererComponent(
                                     table, value, isSelected, hasFocus, row, column);
+                            setHorizontalAlignment(SwingConstants.CENTER);
                             if (!isSelected) {
-                                c.setBackground(BG2);
-                                c.setForeground(FG);
+                                // デフォルトの縞模様
+                                setBackground(row % 2 == 0 ? BG2 : new java.awt.Color(0x1c, 0x28, 0x45));
+                                setForeground(FG);
                                 if (fTargetF != null && row < table.getRowCount()) {
                                     int modelRow = table.convertRowIndexToModel(row);
                                     Object frameVal = table.getModel().getValueAt(modelRow, 0);
                                     if (frameVal instanceof Long) {
                                         long f = (Long) frameVal;
                                         if (fBestCandidate != null && f == fBestCandidate) {
-                                            c.setBackground(new java.awt.Color(0x2a, 0x4a, 0x2a)); // 緑系: 推奨
-                                            c.setForeground(new java.awt.Color(0xa0, 0xff, 0xa0));
+                                            setBackground(new java.awt.Color(0x2a, 0x6a, 0x2a)); // 緑系: 推奨（明るめ）
+                                            setForeground(new java.awt.Color(0xc0, 0xff, 0xc0));
                                         } else if (f > fTargetF) {
-                                            c.setForeground(new java.awt.Color(0xcc, 0x66, 0x66)); // 赤系: 目標を超過
+                                            setForeground(new java.awt.Color(0xcc, 0x66, 0x66)); // 赤系: 目標を超過
                                         }
                                     }
                                 }
                             }
-                            return c;
+                            return this;
                         }
-                    });
+                    };
+                    // 全列に個別設定（makeTableで設定済みのctrを上書き）
+                    for (int i = 0; i < comboTable.getColumnCount(); i++) {
+                        comboTable.getColumnModel().getColumn(i).setCellRenderer(hilight);
+                    }
                     comboTable.repaint();
 
                     if (results.isEmpty()) {
@@ -4521,13 +4527,13 @@ public class MHXXCharmApp extends JFrame {
                         // 目標F指定あり: 推奨候補を強調
                         // ただし複数候補がある時は偽マッチ警告
                         summaryLabel.setText(String.format(
-                            "<html>%d件の候補 — 推奨: <b>%d F</b>（目標 %d F 以下で最も近い、緑色行）" +
-                            "　<span style='color:#cc8888;'>※複数候補がある時は偽マッチ含む可能性。観測数を増やすと絞り込めます</span></html>",
+                            "<html>%d件の候補 — 推奨: <b>%d F</b>（目標 %d F 以下で最も近い、緑色行）<br>" +
+                            "<span style='color:#cc8888;'>※複数候補がある時は偽マッチ含む可能性。観測数を増やすと絞り込めます</span></html>",
                             results.size(), fBestCandidate, fTargetF));
                         summaryLabel.setForeground(SUCCESS);
                     } else {
-                        summaryLabel.setText("<html>" + results.size() + "件の候補（目標Fを入力すると推奨候補をハイライトします）" +
-                            "　<span style='color:#cc8888;'>※候補が多い時は観測数を増やすことを推奨</span></html>");
+                        summaryLabel.setText("<html>" + results.size() + "件の候補（目標Fを入力すると推奨候補をハイライトします）<br>" +
+                            "<span style='color:#cc8888;'>※候補が多い時は観測数を増やすことを推奨</span></html>");
                         summaryLabel.setForeground(WARN);
                     }
                 });
