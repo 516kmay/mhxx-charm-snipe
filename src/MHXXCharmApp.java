@@ -1697,6 +1697,8 @@ public class MHXXCharmApp extends JFrame {
                     new String[]{"差分","フレーム","第1スキル","SP1","第2スキル","SP2","スロット","レア度"});
             case "有名お守り" -> exportCSV(famousModel,
                     new String[]{"フレーム","第1スキル","SP1","第2スキル","SP2","スロット","待ち時間","当たりF範囲","種類"});
+            case "調合スナイプ" -> exportCSV(comboModel,
+                    new String[]{"消費後フレーム","待ち時間","一致数","→周辺のお守り（マカ錬金用）"});
             default -> {
                 if (statusLabel != null) statusLabel.setText("このタブはCSV保存に対応していません");
             }
@@ -5589,7 +5591,7 @@ public class MHXXCharmApp extends JFrame {
 
         // 結果テーブル
         comboModel = new DefaultTableModel(
-                new String[]{"フレーム","消費後フレーム","待ち時間","一致数","→周辺のお守り（マカ錬金用）"}, 0);
+                new String[]{"消費後フレーム","待ち時間","一致数","→周辺のお守り（マカ錬金用）"}, 0);
         JTable comboTable = makeTable(comboModel);
         comboTable.setToolTipText(
             "<html>ダブルクリック→周辺表示にジャンプ / 右クリック→Arduinoコード生成<br>" +
@@ -5740,9 +5742,9 @@ public class MHXXCharmApp extends JFrame {
                             + (charm.s2Name() != null ? " " + charm.s2Name() + charm.sp2() : "")
                             + " s" + charm.slot();
 
-                        // 列構成: フレーム / 消費後F / 待ち時間 / 一致数 / 周辺お守り
+                        // 列構成: 消費後F / 待ち時間 / 一致数 / 周辺お守り
                         comboModel.addRow(new Object[]{
-                            afterFrame, afterFrame, framesToTime(afterFrame),
+                            afterFrame, framesToTime(afterFrame),
                             rs.matchCount(), charmStr
                         });
                     }
