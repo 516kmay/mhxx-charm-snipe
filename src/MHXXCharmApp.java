@@ -13,8 +13,6 @@ import java.util.concurrent.*;
  * MHXX Charm Snipe Tool - Java Swing版 (改良版)
  * Monster Hunter XX お守りスナイプ支援ツール
  *
- * 元プロジェクト: https://github.com/apmnnn/mhxx-rng
- *
  * コンパイル: javac --release 21 -encoding UTF-8 *.java
  * 実行:       java MHXXCharmApp
  */
@@ -133,8 +131,8 @@ public class MHXXCharmApp extends JFrame {
 
     /**
      * 高速剰余判定用の magic 値を事前計算する.
-     * 本家 mag_nj(m) = (0xFFFFFFFFFFFFFFFF / m) + 1 の Java移植.
      * <p>
+     * {@code magic = (0xFFFFFFFFFFFFFFFF / m) + 1}.
      * Java の long は符号付きだが unsigned のように扱う必要があるため、
      * Long.divideUnsigned を使う。
      */
@@ -145,8 +143,8 @@ public class MHXXCharmApp extends JFrame {
 
     /**
      * 高速剰余判定: {@code (a % m) == r} と等価 (ただし偽陽性が稀に発生する).
-     * 本家 div_nj(a, c, r): {@code (uint64(a) - uint64(r)) * c < c}.
      * <p>
+     * 判定式: {@code (uint64(a) - uint64(r)) * c < c} (unsigned 比較).
      * 偽陽性条件: {@code a < r かつ 2^64 mod m == r - a}.
      * 呼び出し側で {@code a >= r} を追加で確認すれば偽陽性を排除できるが、
      * 後続の正確な計算 (getCharm 等) で最終的にハネられるため、
@@ -298,14 +296,14 @@ public class MHXXCharmApp extends JFrame {
     }
 
     // ================================================================
-    // 複数条件検索 (本家 show_fast_multi / loop_search_greater_multi_nj 移植)
+    // 複数条件検索
     // ================================================================
 
     /**
      * 複数条件のうち1つでもマッチするフレームを高速検索する.
      * <p>
-     * 本家 loop_search_greater_multi_nj の移植版＋拡張。第2スキルが「指定」「なし」「任意」
-     * のいずれにも対応する。1フレームごとの剰余計算を一度だけ行い、全条件と OR で一致を判定。
+     * 第2スキルが「指定」「なし」「任意」のいずれにも対応する。
+     * 1フレームごとの剰余計算を一度だけ行い、全条件と OR で一致を判定。
      * マッチ候補のみ getCharm() を実行する。
      *
      * @param data       お守りデータ (skill1/skill2/slotvalue/th/kind を含む)
@@ -518,7 +516,7 @@ public class MHXXCharmApp extends JFrame {
     interface MultiSearchCallback { void onFound(long frame, Charm charm, int conditionIndex); }
 
     // ================================================================
-    // Aimpoint (孤立判定) - 本家 aimpoint_blue / aimpoint_quest 移植
+    // Aimpoint (孤立判定)
     //
     // 概要:
     //   ある目標フレームの周辺にどれだけ「狙い目」のフレームが集中しているか判定する。
@@ -529,7 +527,7 @@ public class MHXXCharmApp extends JFrame {
     // ================================================================
 
     /**
-     * マカ錬金時の孤立判定 (本家 aimpoint_blue 移植).
+     * マカ錬金時の孤立判定.
      * <p>
      * 指定フレームを中心に、その周辺で同じお守りを得られる「狙い目」の数を数える。
      * マカ錬金では、現在地から 9F descend した位置で w%100&lt;th なら同じお守りが出る、
@@ -560,7 +558,7 @@ public class MHXXCharmApp extends JFrame {
     ) {}
 
     /**
-     * クエスト報酬時の孤立判定 (本家 aimpoint_quest 移植).
+     * クエスト報酬時の孤立判定.
      * <p>
      * 指定フレームから前方 (num-1)*7+1 個のフレームに対し、
      * クエスト報酬として「先頭から何個目のお守りまで連続ヒット可能か」を DP で計算する。
@@ -627,7 +625,6 @@ public class MHXXCharmApp extends JFrame {
 
     // ================================================================
     // Reward Reverse (報酬逆算)
-    // 本家 search_reward (apmnnn氏のmhxx-rng) の完全移植
     // ================================================================
 
     /** 採取ツアー報酬テーブル: アイテム名 → 累積閾値 (0..99) */
@@ -637,7 +634,7 @@ public class MHXXCharmApp extends JFrame {
     };
     static final int[] REWARD_THRESHOLDS = {20, 40, 65, 85, 90, 95, 100};
 
-    /** 100要素のルックアップテーブル: 値→アイテムindex (本家 reward_lookuptable 移植) */
+    /** 100要素のルックアップテーブル: 値→アイテムindex */
     static int[] rewardLookupTable() {
         int[] lut = new int[100];
         int prev = 0;
@@ -664,7 +661,7 @@ public class MHXXCharmApp extends JFrame {
     }
 
     /**
-     * 追加報酬数の判定 (本家 check_bonus 移植).
+     * 追加報酬数の判定.
      * <p>
      * 4個の RNG 値について {@code (n & 0x1F) < bonusThreshold} を計算し、
      * アイテム並びの長さ {@code len1} (4..8) に応じて以下を判定:
@@ -694,13 +691,13 @@ public class MHXXCharmApp extends JFrame {
     /**
      * 報酬逆算の検索結果。
      *
-     * @param frame    本家 j 相当の補正後フレーム (= 報酬画面で進行中の乱数位置)
+     * @param frame    補正後フレーム (= 報酬画面で進行中の乱数位置)
      * @param rewards  実際の報酬列 (補正後にお守り計算等に使う)
      */
     record RewardSearchResult(long frame, String[] rewards) {}
 
     /**
-     * 報酬の個数と並びからフレームを逆算する (本家 search_reward 移植).
+     * 報酬の個数と並びからフレームを逆算する.
      *
      * @param targetItems   各枠のアイテム名 (長さ 4..8)
      * @param maxFrames     検索範囲
@@ -737,7 +734,7 @@ public class MHXXCharmApp extends JFrame {
         // jump(0) → descend×7 した状態をスタート
         // 並列化はせず単一スレッドでstride=1検索 (検索範囲が小さく十分高速)
         // ただし maxFrames が大きい場合のために並列化も検討するが、
-        // search_stride 自体がKMPで O(N) なので並列化の効果は限定的
+        // KMPで O(N) なので並列化の効果は限定的
         RNG rng = new RNG();
         rng.jump(0);
         for (int k = 0; k < 7; k++) rng.descend();
@@ -745,7 +742,7 @@ public class MHXXCharmApp extends JFrame {
         // KMP前方失敗関数
         int[] pi = kmpPrefix(targetIdx);
 
-        // search_stride_nj 移植 (stride=1, ヒットを集める)
+        // stride=1 KMP検索 (ヒットを集める)
         List<Long> hits = new ArrayList<>();
         int n_A = targetIdx.length;
         int kState = 0;
@@ -777,7 +774,7 @@ public class MHXXCharmApp extends JFrame {
             }
         }
 
-        // 各ヒットを check_bonus で検証
+        // 各ヒットを追加報酬数チェックで検証
         List<RewardSearchResult> allResults = new ArrayList<>();
         for (Long iL : hits) {
             if (cancel != null && cancel.get()) break;
@@ -2146,7 +2143,7 @@ public class MHXXCharmApp extends JFrame {
     }
 
     // ================================================================
-    // Multi Search Tab (複数条件検索) - 本家 show_fast_multi 相当
+    // Multi Search Tab (複数条件検索)
     // ================================================================
 
     /** 複数条件検索の各行を表すコンポーネント群 */
@@ -2175,7 +2172,7 @@ public class MHXXCharmApp extends JFrame {
         JPanel descRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         descRow.setOpaque(false);
         JLabel desc = new JLabel(
-            "<html>複数の検索条件を OR で同時に検索する高速モード（本家 show_fast_multi 相当）。<br>" +
+            "<html>複数の検索条件を OR で同時に検索する高速モード。<br>" +
             "全条件は <b>「以上検索」</b> で評価されます。第2スキルは「（なし）」「（任意）」も指定可能。<br>" +
             "条件数が増えても各フレームの剰余計算は1回のみのため、単発検索を複数回するより高速です。</html>");
         desc.setFont(FONT_SMALL);
@@ -2828,7 +2825,7 @@ public class MHXXCharmApp extends JFrame {
         r1.add(label("報酬個数:"));
         rewardTotalCount = makeCombo(new String[]{"4","5","6","7","8"});
         rewardTotalCount.setSelectedItem("4");
-        rewardTotalCount.setToolTipText("報酬画面に表示されたアイテムの合計個数 (4〜8、本家準拠)");
+        rewardTotalCount.setToolTipText("報酬画面に表示されたアイテムの合計個数 (4〜8)");
         r1.add(rewardTotalCount);
         r1.add(label("個"));
         settings.add(r1);
@@ -3042,7 +3039,7 @@ public class MHXXCharmApp extends JFrame {
             long target = Long.parseLong(appraiseTargetFrame.getText().trim());
             long base = Long.parseLong(appraiseBaseFrame.getText().trim());
 
-            // 本家準拠: 報酬逆算結果のフレーム値 (= base) は
+            // 報酬逆算結果のフレーム値 (= base) は
             // 「報酬画面表示時点の現在進行中の乱数位置」をそのまま示す。
             // よって rewardEnd = base。報酬画面表示と同時にタイマーを開始すれば、
             // target - base フレーム分待ってからお守りを投入すればよい。
@@ -3159,7 +3156,7 @@ public class MHXXCharmApp extends JFrame {
 
         if (totalCount < 4 || totalCount > 8) {
             JOptionPane.showMessageDialog(this,
-                "報酬個数は 4〜8 の範囲で指定してください (本家準拠)。",
+                "報酬個数は 4〜8 の範囲で指定してください。",
                 "エラー", JOptionPane.ERROR_MESSAGE);
             return;
         }
@@ -3195,7 +3192,7 @@ public class MHXXCharmApp extends JFrame {
 
             SwingUtilities.invokeLater(() -> {
                 for (RewardSearchResult rsr : results) {
-                    // 本家準拠: rsr.frame は「現在進行中の乱数位置」(報酬画面表示時点)
+                    // rsr.frame は「現在進行中の乱数位置」(報酬画面表示時点)
                     // クエスト報酬のお守りはこの位置から jump+roll×7 で得られる
                     RNG charmRng = new RNG();
                     charmRng.jump(rsr.frame);
@@ -5621,8 +5618,8 @@ public class MHXXCharmApp extends JFrame {
             comboModel.setRowCount(0);
 
             // 個数列のパース（カンマ・スペース・日本語句読点も許容）
-            // 累積列（0始まり、単調増加）と個数列（各要素2〜4）を自動判定
-            // 本家準拠の新仕様では、reverseSearchCombo に累積列をそのまま渡す
+            // 累積列（0始まり、単調増加）と個数列（各要素2〜4）を自動判定する。
+            // reverseSearchCombo には累積列をそのまま渡す。
             String input = comboCountsField.getText().trim();
             String[] parts = input.split("[,，\\s、]+");
             int[] cumulative; // 累積列（reverseSearchComboへ渡す形式）
@@ -5670,10 +5667,10 @@ public class MHXXCharmApp extends JFrame {
                     summaryLabel.setForeground(FG);
                 }
 
-                // 本家仕様では先頭3つカット・末尾99カットするため、最低でも5要素必要
+                // 先頭3つカット・末尾99カットするため、最低でも5要素必要
                 if (cumulative.length < 5) {
                     throw new NumberFormatException(
-                        "本家アルゴリズムでは累積列に最低5要素（=4回分の調合）が必要です。"
+                        "累積列には最低5要素（=4回分の調合）が必要です。"
                         + "推奨は60個前後まで調合した記録（合計15〜30回分）。");
                 }
             } catch (NumberFormatException ex) {
@@ -5708,7 +5705,7 @@ public class MHXXCharmApp extends JFrame {
 
             Thread.ofVirtual().start(() -> {
                 long t0 = System.currentTimeMillis();
-                // 本家準拠: 返り値は「調合終了直後F」（=ツールの「現在F (消費後)」）
+                // 返り値は「調合終了直後F」（=ツールの「現在F (消費後)」）
                 List<Long> results = reverseSearchCombo(fCumulative, fMaxF, cancelFlag);
 
                 SwingUtilities.invokeLater(() -> {
@@ -5722,7 +5719,7 @@ public class MHXXCharmApp extends JFrame {
                             + (charm.s2Name() != null ? " " + charm.s2Name() + charm.sp2() : "")
                             + " s" + charm.slot();
 
-                        // 本家アルゴリズムは「調合終了直後F」のみを返すため、
+                        // 「調合終了直後F」のみを返すため、
                         // 「調合開始F」は厳密には算出できない。afterFrame をそのまま「現在F」として扱う。
                         comboModel.addRow(new Object[]{
                             afterFrame, afterFrame, framesToTime(afterFrame), charmStr
@@ -6189,7 +6186,7 @@ public class MHXXCharmApp extends JFrame {
     // ================================================================
     // Combo Snipe (調合スナイプ: Lv2通常弾の累積個数列から現在フレーム特定)
     //
-    // 仕様 (apmnnn氏のmhxx-rng / search_combo を完全移植):
+    // 仕様:
     //   Lv2通常弾 = ハリの実 + カラの実（各15個以上用意）
     //   調合書を持ってアイテムボックス内（ココット村自宅）で連続調合
     //   (w & 0xFFFF) % 100 の値で個数が決まる:
@@ -6206,7 +6203,7 @@ public class MHXXCharmApp extends JFrame {
     // ================================================================
 
     /**
-     * KMP前方失敗関数（本家 kmp_prefix_nj 移植）
+     * KMP前方失敗関数
      */
     static int[] kmpPrefix(int[] A) {
         int n = A.length;
@@ -6221,7 +6218,7 @@ public class MHXXCharmApp extends JFrame {
     }
 
     /**
-     * stride飛び並列KMP検索（本家 search_stride_nj 移植）。
+     * stride飛び並列KMP検索。
      * stride個の独立した状態を保持し、開始オフセット不明な調合判定を並列探索する。
      *
      * @param step  検索範囲（フレーム数）
@@ -6267,7 +6264,7 @@ public class MHXXCharmApp extends JFrame {
         return res;
     }
 
-    /** 個数判定テーブル（本家 combo_lookuptable 移植） */
+    /** 個数判定テーブル */
     static int[] comboLookupTable() {
         int[] lut = new int[100];
         for (int i = 0; i < 25; i++) lut[i] = 2;
@@ -6277,9 +6274,9 @@ public class MHXXCharmApp extends JFrame {
     }
 
     /**
-     * 調合の累積個数列から「調合終了直後のフレーム位置」を逆算する（本家 search_combo 移植）。
+     * 調合の累積個数列から「調合終了直後のフレーム位置」を逆算する。
      *
-     * 仕様（apmnnn氏のmhxx-rngより）:
+     * 仕様:
      *   - 累積列の先頭3つはカット（初期挙動が不安定なため）
      *   - 末尾の99はカット
      *   - 検索アルゴリズム: stride=5 のKMP並列検索
@@ -6319,7 +6316,7 @@ public class MHXXCharmApp extends JFrame {
 
         // 開始位置: jump(0) → descend×7 した状態
         // jump(0)は初期seedの状態 + roll×7 と等価。descendを7回行うとroll前の状態に戻る。
-        // 本家コードでは jump(start) → descend×7 で、roll×7前の状態を作る。
+        // jump(start) → descend×7 で、roll×7前の状態を作る。
         // start=0 の場合は init() 状態と等価。
         // ここでは、各並列ワーカーが startFrame でjumpRawしてからdescendを7回した状態を使う。
 
