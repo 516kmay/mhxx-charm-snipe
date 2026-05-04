@@ -949,8 +949,8 @@ public class MHXXCharmApp extends JFrame {
     // 調合スナイプ系（保存・復元のためインスタンスフィールド化）
     JTextField comboCountsField;       // 累積弾数 or 個数列
     JTextField comboTargetFField;      // 目標F（調合スナイプタブ）
+    JTextField comboMinMatchField;     // 最小一致数
     JTextField comboNcField;           // Continue回数（調合Arduinoタブ）
-    JTextField comboNumField;          // 調合回数（目安）
     JTextField comboDownKeysField;     // Lv2弾までの↓数
     JTextField comboArdCurrentFField;  // 調合Arduinoタブの「現在F (消費後)」
     JTextField comboArdTargetFField;   // 調合Arduinoタブの「目標F」（調合スナイプの目標Fと連動）
@@ -1001,9 +1001,9 @@ public class MHXXCharmApp extends JFrame {
 
         // Tabs - 論理的にグループ化した順番:
         //   [検索系] お守り検索 / 複数条件検索 / 周辺表示 / 有名お守り
-        //   [スナイプ] 調合スナイプ / 報酬逆算 / クエスト周回
-        //   [実行系] タイマー / キャリブレーション
-        //   [Arduino] Arduino / 調合Arduino
+        //   [調合スナイプ系] 調合スナイプ / 調合Arduino / Arduino / キャリブレーション
+        //   [その他スナイプ] 報酬逆算 / クエスト周回
+        //   [実行系] タイマー
         tabs = new JTabbedPane();
         tabs.setBackground(BG);
         tabs.setForeground(FG);
@@ -1013,6 +1013,9 @@ public class MHXXCharmApp extends JFrame {
         tabs.addTab(" 周辺表示", buildAroundTab());
         tabs.addTab(" 有名お守り", buildFamousTab());
         tabs.addTab(" 調合スナイプ", buildComboSnipeTab());
+        tabs.addTab(" 調合Arduino", buildComboArduinoTab());
+        tabs.addTab(" Arduino", buildArduinoTab());
+        tabs.addTab(" キャリブレーション", buildCalibrationTab());
         tabs.addTab(" 報酬逆算", buildRewardReverseTab());
         tabs.addTab(" クエスト周回", buildQuestLoopTab());
         // タイマータブはJScrollPaneでラップ（縦長コンテンツに対応）
@@ -1024,9 +1027,6 @@ public class MHXXCharmApp extends JFrame {
         timerScroll.getViewport().setBackground(BG);
         timerScroll.getVerticalScrollBar().setUnitIncrement(16);
         tabs.addTab(" タイマー", timerScroll);
-        tabs.addTab(" キャリブレーション", buildCalibrationTab());
-        tabs.addTab(" Arduino", buildArduinoTab());
-        tabs.addTab(" 調合Arduino", buildComboArduinoTab());
         add(tabs, BorderLayout.CENTER);
 
         // タブ並び替え後のキーボードショートカット・主要アクション登録
@@ -1090,7 +1090,6 @@ public class MHXXCharmApp extends JFrame {
             if (comboCountsField != null) props.setProperty("combo.counts", comboCountsField.getText());
             if (comboTargetFField != null) props.setProperty("combo.targetF", comboTargetFField.getText());
             if (comboNcField != null) props.setProperty("combo.nc", comboNcField.getText());
-            if (comboNumField != null) props.setProperty("combo.num", comboNumField.getText());
             if (comboDownKeysField != null) props.setProperty("combo.downKeys", comboDownKeysField.getText());
             if (comboArdCurrentFField != null) props.setProperty("combo.ardCurrentF", comboArdCurrentFField.getText());
             if (comboArdTargetFField != null) props.setProperty("combo.ardTargetF", comboArdTargetFField.getText());
@@ -1161,8 +1160,6 @@ public class MHXXCharmApp extends JFrame {
             if (comboTargetFField != null && !savedComboTargetF.isEmpty()) comboTargetFField.setText(savedComboTargetF);
             String savedComboNc = props.getProperty("combo.nc", "");
             if (comboNcField != null && !savedComboNc.isEmpty()) comboNcField.setText(savedComboNc);
-            String savedComboNum = props.getProperty("combo.num", "");
-            if (comboNumField != null && !savedComboNum.isEmpty()) comboNumField.setText(savedComboNum);
             String savedComboDownKeys = props.getProperty("combo.downKeys", "");
             if (comboDownKeysField != null && !savedComboDownKeys.isEmpty()) comboDownKeysField.setText(savedComboDownKeys);
             String savedArdCurrent = props.getProperty("combo.ardCurrentF", "");
@@ -5457,6 +5454,18 @@ public class MHXXCharmApp extends JFrame {
             }
         });
 
+        // 最小一致数行
+        JPanel rowMode = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        rowMode.setOpaque(false);
+        rowMode.add(label("最小一致数:"));
+        comboMinMatchField = makeField("8", 4);
+        comboMinMatchField.setToolTipText(
+            "<html>先頭から連続して一致する最小要素数 (推奨: 8〜10)。<br>" +
+            "値を上げると候補が絞れるが、ロードブレで本物のマッチも逃しやすくなる。<br>" +
+            "入力差分の全要素数と同じ値にすると、完全一致と同じ結果になる。</html>");
+        rowMode.add(comboMinMatchField);
+        settings.add(rowMode);
+
         // 検索範囲 + 目標F + ボタン
         JTextField rangeField = makeField("1000000", 12);
         rangeField.setToolTipText(
@@ -5580,7 +5589,7 @@ public class MHXXCharmApp extends JFrame {
 
         // 結果テーブル
         comboModel = new DefaultTableModel(
-                new String[]{"フレーム","消費後フレーム","待ち時間","→周辺のお守り（マカ錬金用）"}, 0);
+                new String[]{"フレーム","消費後フレーム","待ち時間","一致数","→周辺のお守り（マカ錬金用）"}, 0);
         JTable comboTable = makeTable(comboModel);
         comboTable.setToolTipText(
             "<html>ダブルクリック→周辺表示にジャンプ / 右クリック→Arduinoコード生成<br>" +
@@ -5692,8 +5701,19 @@ public class MHXXCharmApp extends JFrame {
                 return;
             }
 
+            // 検索モードと最小一致数
+            // 最小一致数を取得 (パース失敗時は 8 にフォールバック)
+            int minMatch;
+            try {
+                minMatch = Integer.parseInt(comboMinMatchField.getText().trim());
+                if (minMatch < 1) minMatch = 8;
+            } catch (NumberFormatException ex) {
+                minMatch = 8;
+            }
+
             final int[] fCumulative = cumulative;
             final long fMaxF = maxF;
+            final int fMinMatch = minMatch;
 
             CharmData cd = new CharmData();
             cd.setBlue(); // 風化したお守り
@@ -5705,11 +5725,12 @@ public class MHXXCharmApp extends JFrame {
 
             Thread.ofVirtual().start(() -> {
                 long t0 = System.currentTimeMillis();
-                // 返り値は「調合終了直後F」（=ツールの「現在F (消費後)」）
-                List<Long> results = reverseSearchCombo(fCumulative, fMaxF, cancelFlag);
+                List<ComboSearchResult> results = reverseSearchComboPartial(
+                    fCumulative, fMaxF, fMinMatch, cancelFlag);
 
                 SwingUtilities.invokeLater(() -> {
-                    for (Long afterFrame : results) {
+                    for (ComboSearchResult rs : results) {
+                        long afterFrame = rs.frame();
                         // 消費後のフレームでマカ錬金のお守りを計算
                         RNG charmRng = new RNG();
                         charmRng.jump(afterFrame);
@@ -5719,18 +5740,18 @@ public class MHXXCharmApp extends JFrame {
                             + (charm.s2Name() != null ? " " + charm.s2Name() + charm.sp2() : "")
                             + " s" + charm.slot();
 
-                        // 「調合終了直後F」のみを返すため、
-                        // 「調合開始F」は厳密には算出できない。afterFrame をそのまま「現在F」として扱う。
+                        // 列構成: フレーム / 消費後F / 待ち時間 / 一致数 / 周辺お守り
                         comboModel.addRow(new Object[]{
-                            afterFrame, afterFrame, framesToTime(afterFrame), charmStr
+                            afterFrame, afterFrame, framesToTime(afterFrame),
+                            rs.matchCount(), charmStr
                         });
                     }
 
                     double elapsed = (System.currentTimeMillis() - t0) / 1000.0;
                     progressBar.setVisible(false);
                     searchBtn.setEnabled(true);
-                    statusLabel.setText(String.format("調合スナイプ完了: %d件 (%.2f秒)",
-                        results.size(), elapsed));
+                    statusLabel.setText(String.format("調合スナイプ完了 (≧%d要素一致): %d件 (%.2f秒)",
+                        fMinMatch, results.size(), elapsed));
 
                     // 目標F取得（任意）
                     Long targetF = null;
@@ -5743,7 +5764,8 @@ public class MHXXCharmApp extends JFrame {
                     // 目標Fに最も近い候補（目標F以下）を探す
                     Long bestCandidate = null;
                     if (fTargetF != null) {
-                        for (Long f : results) {
+                        for (ComboSearchResult rs : results) {
+                            long f = rs.frame();
                             if (f <= fTargetF) {
                                 if (bestCandidate == null || f > bestCandidate) {
                                     bestCandidate = f;
@@ -5795,7 +5817,7 @@ public class MHXXCharmApp extends JFrame {
                             fMaxF));
                         summaryLabel.setForeground(WARN);
                     } else if (results.size() == 1) {
-                        summaryLabel.setText("現在フレーム特定: " + results.get(0) + "F");
+                        summaryLabel.setText("現在フレーム特定: " + results.get(0).frame() + "F");
                         summaryLabel.setForeground(SUCCESS);
                     } else if (fBestCandidate != null) {
                         // 目標F指定あり: 推奨候補を強調
@@ -5866,12 +5888,6 @@ public class MHXXCharmApp extends JFrame {
         comboNcField = makeField("", 8);
         comboNcField.setToolTipText("<html>Continue連打回数。目標Fが大きいほど多くする。<br>目安: 目標F ÷ 714</html>");
         c1Row.add(comboNcField);
-        c1Row.add(label("  調合回数（目安）:"));
-        comboNumField = makeField("15", 5);
-        comboNumField.setToolTipText(
-            "<html>10秒のA長押しで実機が何回くらい調合するかの<b>目安</b>。<br>" +
-            "（生成コードのA長押し時間は10秒固定。このフィールドはメモ用）</html>");
-        c1Row.add(comboNumField);
         c1Row.add(label("  Lv2弾までの↓数:"));
         comboDownKeysField = makeField("0", 4);
         comboDownKeysField.setToolTipText(
@@ -6293,17 +6309,38 @@ public class MHXXCharmApp extends JFrame {
      */
     public static List<Long> reverseSearchCombo(int[] cumulativeCounts, long maxFrames,
             java.util.concurrent.atomic.AtomicBoolean cancel) {
-        List<Long> results = new ArrayList<>();
+        List<ComboSearchResult> rs = reverseSearchComboPartial(cumulativeCounts, maxFrames, 0, cancel);
+        List<Long> out = new ArrayList<>(rs.size());
+        for (ComboSearchResult r : rs) out.add(r.frame());
+        return out;
+    }
+
+    /** 調合スナイプ逆算結果 (前方部分一致対応版) */
+    public record ComboSearchResult(long frame, int matchCount) {}
+
+    /**
+     * 調合の累積個数列から「調合終了直後のフレーム位置」を逆算する (前方部分一致対応版).
+     *
+     * @param cumulativeCounts 累積個数列（0始まり）
+     * @param maxFrames 検索範囲
+     * @param minMatchCount 最小一致数。0 なら完全一致 (= 既存挙動)、
+     *                      正の値なら先頭から連続して N 要素以上一致するフレームを返す
+     * @param cancel キャンセルフラグ
+     * @return マッチ結果のリスト (フレーム + 一致数)
+     */
+    public static List<ComboSearchResult> reverseSearchComboPartial(int[] cumulativeCounts,
+            long maxFrames, int minMatchCount,
+            java.util.concurrent.atomic.AtomicBoolean cancel) {
+        List<ComboSearchResult> results = new ArrayList<>();
         if (cumulativeCounts == null || cumulativeCounts.length < 5) return results;
 
         // 先頭3つカット、末尾99カット
-        int[] posA;
         int rawLen = cumulativeCounts.length;
         int endIdx = rawLen;
         if (cumulativeCounts[rawLen - 1] == 99) endIdx--;
         int startIdx = 3;
         if (endIdx - startIdx <= 1) return results;
-        posA = Arrays.copyOfRange(cumulativeCounts, startIdx, endIdx);
+        int[] posA = Arrays.copyOfRange(cumulativeCounts, startIdx, endIdx);
 
         // 差分計算
         int[] diffA = new int[posA.length - 1];
@@ -6314,22 +6351,43 @@ public class MHXXCharmApp extends JFrame {
 
         int[] lut = comboLookupTable();
 
-        // 開始位置: jump(0) → descend×7 した状態
-        // jump(0)は初期seedの状態 + roll×7 と等価。descendを7回行うとroll前の状態に戻る。
-        // jump(start) → descend×7 で、roll×7前の状態を作る。
-        // start=0 の場合は init() 状態と等価。
-        // ここでは、各並列ワーカーが startFrame でjumpRawしてからdescendを7回した状態を使う。
+        // 完全一致モードか前方部分一致モードかを判定
+        boolean partialMode = (minMatchCount > 0 && minMatchCount < diffA.length);
+        // 部分一致モードでは、検索パターンを「先頭 minMatchCount 要素」に絞る
+        // ただし長さが diffA.length と異なるので、補正値も調整する必要がある
+        int[] searchPattern;
+        int patternLen;
+        if (partialMode) {
+            patternLen = minMatchCount;
+            searchPattern = Arrays.copyOf(diffA, patternLen);
+        } else {
+            patternLen = diffA.length;
+            searchPattern = diffA;
+        }
+
+        // 補正値: 完全一致なら従来通り、部分一致なら patternLen に応じて調整
+        // posA に含まれる要素数 = patternLen + 1
+        // raw 換算では先頭3つカットがあるので: 部分マッチ長 patternLen 要素を確保するための raw 長 = patternLen + 1 + 3
+        // よって correction = -5*3 - 15 + 2*((patternLen + 4) - 1)
+        //                  = -15 - 15 + 2*(patternLen + 3)
+        //                  = -30 + 2*patternLen + 6
+        //                  = 2*patternLen - 24
+        // ※ rawLen と同じ意味になる: rawLen = patternLen + 4 (差分→posA→cumulativeへの戻し)
+        int effectiveRawLen = patternLen + 4;
+        final int correction = -5 * 3 - 15 + 2 * (effectiveRawLen - 1);
 
         int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
         if (maxFrames < (long)nThreads * 1000) nThreads = 1;
 
         long chunkSize = maxFrames / nThreads;
-        List<Long> allResults = Collections.synchronizedList(new ArrayList<>());
+        List<ComboSearchResult> allResults = Collections.synchronizedList(new ArrayList<>());
         ExecutorService exec = Executors.newFixedThreadPool(nThreads);
         List<Future<?>> futures = new ArrayList<>();
 
-        // 補正値（呼び出し側で使用）
-        final int correction = -5 * 3 - 15 + 2 * (rawLen - 1);
+        final int[] fSearchPattern = searchPattern;
+        final int[] fDiffA = diffA;
+        final int fPatternLen = patternLen;
+        final boolean fPartialMode = partialMode;
 
         for (int t = 0; t < nThreads; t++) {
             final long startFrame = (long)t * chunkSize;
@@ -6344,14 +6402,21 @@ public class MHXXCharmApp extends JFrame {
 
                 List<Long> hits = searchStride(localStep,
                         rng.x, rng.y, rng.z, rng.w, rng.t,
-                        diffA, 5, lut, cancel);
+                        fSearchPattern, 5, lut, cancel);
 
                 for (Long i : hits) {
                     long j = i + correction;
                     long resultFrame = startFrame + j;
-                    if (resultFrame >= 0 && resultFrame < maxFrames) {
-                        allResults.add(resultFrame);
+                    if (resultFrame < 0 || resultFrame >= maxFrames) continue;
+
+                    int actualMatch;
+                    if (fPartialMode) {
+                        // 部分一致モード: ヒット位置から続けて何要素一致するか測定
+                        actualMatch = countForwardMatch(startFrame, i, fDiffA, lut);
+                    } else {
+                        actualMatch = fDiffA.length;
                     }
+                    allResults.add(new ComboSearchResult(resultFrame, actualMatch));
                 }
             }));
         }
@@ -6360,8 +6425,43 @@ public class MHXXCharmApp extends JFrame {
             try { f.get(); } catch (Exception ignored) {}
         }
         exec.shutdown();
-        allResults.sort(Long::compare);
+        allResults.sort((a, b) -> Long.compare(a.frame(), b.frame()));
         return allResults;
+    }
+
+    /**
+     * 指定された KMP 一致開始位置から、先頭何要素まで連続して一致するか測定する.
+     * 部分一致モードで「実際にどこまで一致したか」を結果に表示するために使う。
+     *
+     * @param startFrame ワーカーの開始フレーム
+     * @param iPos       searchStride 内でヒットした位置 (= マッチ開始の差分インデックス × stride)
+     * @param fullDiff   元の完全な差分配列
+     * @param lut        個数判定テーブル
+     * @return 連続一致した要素数 (最大 fullDiff.length)
+     */
+    static int countForwardMatch(long startFrame, long iPos, int[] fullDiff, int[] lut) {
+        // ワーカーは startFrame から開始し、stride=5 でステップ
+        // iPos は「ヒット開始のフレームオフセット (= 差分配列の最初の要素位置)」
+        // ※ searchStride の hits は「マッチ開始位置」
+        RNG rng = new RNG();
+        rng.jump(startFrame);
+        for (int k = 0; k < 7; k++) rng.descend();
+        // iPos まで ascend で進める
+        for (long k = 0; k < iPos; k++) rng.ascend();
+
+        int match = 0;
+        for (int k = 0; k < fullDiff.length; k++) {
+            int v = (int)((rng.w & 0xFFFFL) % 100);
+            int n = lut[v];
+            if (n == fullDiff[k]) {
+                match++;
+            } else {
+                break;
+            }
+            // stride=5 で進める
+            for (int s = 0; s < 5; s++) rng.ascend();
+        }
+        return match;
     }
 
     // ================================================================
