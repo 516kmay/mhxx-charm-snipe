@@ -82,31 +82,33 @@ public class MHXXCharmApp extends JFrame {
     // Charm Generation
     // ================================================================
     static Charm getCharm(RNG rng, CharmData data, int origin) {
-        long[] r = rng.r;
-        int id1 = (int)(r[0] % data.skill1.length);
-        int id2 = (int)(r[3] % data.skill2.length);
+        // ★最適化: 配列ではなく個別フィールド r0..r6 から読む (rollFast 後でも syncRArray 不要)
+        long r0 = rng.r0, r1 = rng.r1, r2 = rng.r2, r3 = rng.r3,
+             r4 = rng.r4, r5 = rng.r5, r6 = rng.r6;
+        int id1 = (int)(r0 % data.skill1.length);
+        int id2 = (int)(r3 % data.skill2.length);
         int s1max = data.sp1[id1][1];
         int s2max = data.sp2[id2][1];
         int skill1Id = data.skill1[id1];
-        int tmp1 = (int)(r[1] % (data.sp1[id1][1] - data.sp1[id1][0] + 1)) + data.sp1[id1][0];
-        boolean hasSk2 = (r[2] % 100) >= data.th;
+        int tmp1 = (int)(r1 % (data.sp1[id1][1] - data.sp1[id1][0] + 1)) + data.sp1[id1][0];
+        boolean hasSk2 = (r2 % 100) >= data.th;
         int skill2Id = -1, tmp2 = 0, effTmp2 = 0;
         long q5;
         if (hasSk2) {
             skill2Id = data.skill2[id2];
-            if (origin == 1 && r[4] % 2 == 0) {
-                long q4 = r[5]; q5 = r[6];
+            if (origin == 1 && r4 % 2 == 0) {
+                long q4 = r5; q5 = r6;
                 tmp2 = (int)(q4 % (data.sp2[id2][0] + 1)) - data.sp2[id2][0];
             } else {
                 long q4;
-                if (origin == 1) { q4 = r[5]; q5 = r[6]; }
-                else             { q4 = r[4]; q5 = r[5]; }
+                if (origin == 1) { q4 = r5; q5 = r6; }
+                else             { q4 = r4; q5 = r5; }
                 tmp2 = (int)(q4 % data.sp2[id2][1]) + 1;
             }
             effTmp2 = tmp2;
             if (skill1Id == skill2Id || tmp2 < 0) effTmp2 = 0;
         } else {
-            q5 = r[3];
+            q5 = r3;
         }
         int fill = (int)((long)tmp1 * s2max + (long)effTmp2 * s1max) * 10 / (s1max * s2max);
         int slotVal = data.getSlot(fill, (int)(q5 % 100));
@@ -127,6 +129,37 @@ public class MHXXCharmApp extends JFrame {
     static int skillNameToId(String name) {
         for (int i = 0; i < SKILL_NAMES.length; i++) if (SKILL_NAMES[i].equals(name)) return i;
         return -1;
+    }
+
+    /**
+     * 高速剰余判定用の magic 値を事前計算する.
+     * 本家 mag_nj(m) = (0xFFFFFFFFFFFFFFFF / m) + 1 の Java移植.
+     * <p>
+     * Java の long は符号付きだが unsigned のように扱う必要があるため、
+     * Long.divideUnsigned を使う。
+     */
+    static long magicFor(int m) {
+        if (m <= 0) throw new IllegalArgumentException("m must be positive");
+        return Long.divideUnsigned(-1L, m) + 1L;
+    }
+
+    /**
+     * 高速剰余判定: {@code (a % m) == r} と等価 (ただし偽陽性が稀に発生する).
+     * 本家 div_nj(a, c, r): {@code (uint64(a) - uint64(r)) * c < c}.
+     * <p>
+     * 偽陽性条件: {@code a < r かつ 2^64 mod m == r - a}.
+     * 呼び出し側で {@code a >= r} を追加で確認すれば偽陽性を排除できるが、
+     * 後続の正確な計算 (getCharm 等) で最終的にハネられるため、
+     * フィルタとして使う限り正確性は保たれる。
+     *
+     * @param a    判定対象 (unsigned 64bit として扱う)
+     * @param c    {@link #magicFor(int)} で得た magic
+     * @param r    比較対象の剰余値
+     * @return    a % m == r の可能性があれば true
+     */
+    static boolean fastModEq(long a, long c, long r) {
+        // (a - r) * c < c (unsigned 比較)
+        return Long.compareUnsigned((a - r) * c, c) < 0;
     }
 
     interface SearchCallback { void onFound(long frame, Charm charm); }
@@ -166,60 +199,79 @@ public class MHXXCharmApp extends JFrame {
         for (int t = 0; t < nThreads; t++) {
             final int startFrame = t * chunkSize;
             final int endFrame = (t == nThreads - 1) ? maxFrames : (t + 1) * chunkSize;
+            final boolean isSingleThread = (nThreads == 1);
             futures.add(exec.submit(() -> {
                 RNG rng = new RNG();
                 rng.jump(startFrame);
                 int len1 = data.skill1.length;
                 int len2 = data.skill2.length;
+                int th = data.th;
                 int localCount = endFrame - startFrame;
-                int reportInterval = Math.max(1, maxFrames / 100);
+                int reportInterval = Math.max(1000, maxFrames / 100);
+                List<Object[]> localResults = new ArrayList<>(64);
+                int localDone = 0;
+
+                // ★最適化: mag/div 事前計算 (除算なしで == 判定)
+                final long magLen1 = magicFor(len1);
+                final long magLen2 = magicFor(len2);
+                final long fId1L = fId1;
+                final long fId2L = (fS2Any || fS2None) ? 0L : fId2;
 
                 for (int i = 0; i < localCount; i++) {
-                    if (cancel != null && cancel.get()) break;
-                    rng.roll();
+                    if ((i & 0x3FF) == 0 && cancel != null && cancel.get()) break;
+                    rng.rollFast();
 
-                    if (rng.r[0] % len1 != fId1) {
-                        int done = globalDone.incrementAndGet();
-                        if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
-                        continue;
-                    }
-
-                    boolean hasSk2 = (rng.r[2] % 100) >= data.th;
-                    if (fS2None && hasSk2) {
-                        int done = globalDone.incrementAndGet();
-                        if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
-                        continue;
-                    }
-                    if (!fS2Any && !fS2None) {
-                        if (!hasSk2 || rng.r[3] % len2 != fId2) {
-                            int done = globalDone.incrementAndGet();
-                            if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
-                            continue;
+                    boolean skip = false;
+                    // ★高速判定: r0 % len1 == fId1 を fastModEq で
+                    if (!fastModEq(rng.r0, magLen1, fId1L)) {
+                        skip = true;
+                    } else {
+                        boolean hasSk2 = (rng.r2 % 100) >= th;
+                        if (fS2None && hasSk2) {
+                            skip = true;
+                        } else if (!fS2Any && !fS2None) {
+                            // ★高速判定: r3 % len2 == fId2 を fastModEq で
+                            if (!hasSk2 || !fastModEq(rng.r3, magLen2, fId2L)) skip = true;
                         }
                     }
 
-                    Charm c = getCharm(rng, data, origin);
-                    boolean match;
-                    if (fS2Any) {
-                        match = greaterMode
-                                ? (c.sp1() >= sp1v && c.slot() >= slotv)
-                                : (c.sp1() == sp1v && c.slot() == slotv);
-                    } else if (fS2None) {
-                        match = greaterMode
-                                ? (c.sp1() >= sp1v && c.slot() >= slotv && c.s2Name() == null)
-                                : (c.sp1() == sp1v && c.slot() == slotv && c.s2Name() == null);
-                    } else {
-                        match = greaterMode
-                                ? (c.sp1() >= sp1v && c.sp2() >= sp2v && c.slot() >= slotv)
-                                : (c.sp1() == sp1v && c.sp2() == sp2v && c.slot() == slotv);
+                    if (!skip) {
+                        Charm c = getCharm(rng, data, origin);
+                        boolean match;
+                        if (fS2Any) {
+                            match = greaterMode
+                                    ? (c.sp1() >= sp1v && c.slot() >= slotv)
+                                    : (c.sp1() == sp1v && c.slot() == slotv);
+                        } else if (fS2None) {
+                            match = greaterMode
+                                    ? (c.sp1() >= sp1v && c.slot() >= slotv && c.s2Name() == null)
+                                    : (c.sp1() == sp1v && c.slot() == slotv && c.s2Name() == null);
+                        } else {
+                            match = greaterMode
+                                    ? (c.sp1() >= sp1v && c.sp2() >= sp2v && c.slot() >= slotv)
+                                    : (c.sp1() == sp1v && c.sp2() == sp2v && c.slot() == slotv);
+                        }
+                        if (match) {
+                            long frame = rng.f - 7;
+                            Object[] row = {frame, c};
+                            localResults.add(row);
+                            if (cb != null) cb.onFound(frame, c);
+                        }
                     }
-                    if (match) {
-                        long frame = rng.f - 7;
-                        allResults.add(new Object[]{frame, c});
-                        if (cb != null) cb.onFound(frame, c);
+
+                    localDone++;
+                    if (localDone >= reportInterval) {
+                        int done = isSingleThread ? (i + 1) : globalDone.addAndGet(localDone);
+                        localDone = 0;
+                        if (pcb != null) pcb.onProgress(done, maxFrames);
                     }
-                    int done = globalDone.incrementAndGet();
-                    if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
+                }
+                if (localDone > 0) {
+                    int done = isSingleThread ? localCount : globalDone.addAndGet(localDone);
+                    if (pcb != null) pcb.onProgress(done, maxFrames);
+                }
+                if (!localResults.isEmpty()) {
+                    allResults.addAll(localResults);
                 }
             }));
         }
@@ -245,6 +297,318 @@ public class MHXXCharmApp extends JFrame {
         return results;
     }
 
+    // ================================================================
+    // 複数条件検索 (本家 show_fast_multi / loop_search_greater_multi_nj 移植)
+    // ================================================================
+
+    /**
+     * 複数条件のうち1つでもマッチするフレームを高速検索する.
+     * <p>
+     * 本家 loop_search_greater_multi_nj の移植版＋拡張。第2スキルが「指定」「なし」「任意」
+     * のいずれにも対応する。1フレームごとの剰余計算を一度だけ行い、全条件と OR で一致を判定。
+     * マッチ候補のみ getCharm() を実行する。
+     *
+     * @param data       お守りデータ (skill1/skill2/slotvalue/th/kind を含む)
+     * @param conditions 検索条件のリスト (空不可)
+     * @param origin     0=マカ錬金, 1=クエスト
+     * @param maxFrames  検索範囲 (フレーム数)
+     * @param cb         ヒット時コールバック (frame, charm, conditionIndex)
+     * @param pcb        進捗コールバック
+     * @param cancel     キャンセルフラグ
+     * @return ヒット結果リスト. 各要素は {frame, charm, conditionIndex} の配列.
+     */
+    static List<Object[]> searchCharmMulti(CharmData data, List<SearchCondition> conditions,
+                                            int origin, int maxFrames,
+                                            MultiSearchCallback cb, ProgressCallback pcb,
+                                            java.util.concurrent.atomic.AtomicBoolean cancel) {
+        if (conditions == null || conditions.isEmpty()) return Collections.emptyList();
+
+        // 条件をid配列に変換 (s2モードに応じて id2 = -1 で skip 表現)
+        // s2Mode: 0=特定スキル, 1=なし, 2=任意
+        int n = conditions.size();
+        int[] id1Arr = new int[n], sp1Arr = new int[n];
+        int[] id2Arr = new int[n], sp2Arr = new int[n];
+        int[] slotArr = new int[n];
+        int[] s2ModeArr = new int[n];
+        for (int i = 0; i < n; i++) {
+            SearchCondition cond = conditions.get(i);
+            int sid1 = skillNameToId(cond.s1);
+            if (sid1 < 0) throw new IllegalArgumentException("第1スキル不正: " + cond.s1 + " (条件#" + (i+1) + ")");
+            int idx1 = indexOf(data.skill1, sid1);
+            if (idx1 < 0) throw new IllegalArgumentException("第1スキル一覧外: " + cond.s1 + " (条件#" + (i+1) + ")");
+            id1Arr[i] = idx1;
+            sp1Arr[i] = cond.sp1;
+
+            // s2モード判定
+            if (S2_NONE.equals(cond.s2)) {
+                s2ModeArr[i] = 1; // なし
+                id2Arr[i] = -1;
+                sp2Arr[i] = 0;
+            } else if (S2_ANY.equals(cond.s2)) {
+                s2ModeArr[i] = 2; // 任意
+                id2Arr[i] = -1;
+                sp2Arr[i] = 0;
+            } else {
+                s2ModeArr[i] = 0; // 特定
+                int sid2 = skillNameToId(cond.s2);
+                if (sid2 < 0) throw new IllegalArgumentException("第2スキル不正: " + cond.s2 + " (条件#" + (i+1) + ")");
+                int idx2 = indexOf(data.skill2, sid2);
+                if (idx2 < 0) throw new IllegalArgumentException("第2スキル一覧外: " + cond.s2 + " (条件#" + (i+1) + ")");
+                id2Arr[i] = idx2;
+                sp2Arr[i] = cond.sp2;
+            }
+            slotArr[i] = cond.slot;
+        }
+
+        int len1 = data.skill1.length;
+        int len2 = data.skill2.length;
+        int th = data.th;
+
+        // === 高速化: id1 別にバケット (条件インデックスのリスト) を作る ===
+        // m0 (= r0 % len1) が分かった時点で、その値を id1 とする条件群だけを評価する
+        @SuppressWarnings("unchecked")
+        List<Integer>[] id1Buckets = new List[len1];
+        for (int i = 0; i < n; i++) {
+            int b = id1Arr[i];
+            if (id1Buckets[b] == null) id1Buckets[b] = new ArrayList<>();
+            id1Buckets[b].add(i);
+        }
+        // ↓ 配列化して高速アクセス
+        int[][] bucketIdx = new int[len1][];
+        for (int b = 0; b < len1; b++) {
+            if (id1Buckets[b] == null) {
+                bucketIdx[b] = EMPTY_INT_ARRAY;
+            } else {
+                bucketIdx[b] = id1Buckets[b].stream().mapToInt(Integer::intValue).toArray();
+            }
+        }
+
+        int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
+        if (maxFrames < nThreads * 1000) nThreads = 1;
+        int chunkSize = maxFrames / nThreads;
+        java.util.concurrent.atomic.AtomicInteger globalDone = new java.util.concurrent.atomic.AtomicInteger(0);
+        List<Object[]> allResults = Collections.synchronizedList(new ArrayList<>());
+        ExecutorService exec = Executors.newFixedThreadPool(nThreads);
+        List<Future<?>> futures = new ArrayList<>();
+
+        // クロージャ用 final
+        final int[][] fBucketIdx = bucketIdx;
+        final int[] fId2Arr = id2Arr;
+        final int[] fSp1Arr = sp1Arr;
+        final int[] fSp2Arr = sp2Arr;
+        final int[] fSlotArr = slotArr;
+        final int[] fS2ModeArr = s2ModeArr;
+
+        for (int t = 0; t < nThreads; t++) {
+            final int startFrame = t * chunkSize;
+            final int endFrame = (t == nThreads - 1) ? maxFrames : (t + 1) * chunkSize;
+            final boolean isSingleThread = (nThreads == 1);
+            futures.add(exec.submit(() -> {
+                RNG rng = new RNG();
+                rng.jump(startFrame);
+                int localCount = endFrame - startFrame;
+                int reportInterval = Math.max(1000, maxFrames / 100);
+                // ★最適化: localDone と localResults でバッチ化し、共有変数アクセスを減らす
+                List<Object[]> localResults = new ArrayList<>(64);
+                int localDone = 0;
+
+                for (int i = 0; i < localCount; i++) {
+                    if ((i & 0x3FF) == 0 && cancel != null && cancel.get()) break;
+                    rng.rollFast();
+
+                    long m0 = rng.r0 % len1;
+
+                    // ★最適化: そのid1にマッチする条件がなければ即座にスキップ
+                    int[] bucket = fBucketIdx[(int)m0];
+                    if (bucket.length == 0) {
+                        localDone++;
+                        if (localDone >= reportInterval) {
+                            int done = isSingleThread ? (i + 1) : globalDone.addAndGet(localDone);
+                            localDone = 0;
+                            if (pcb != null) pcb.onProgress(done, maxFrames);
+                        }
+                        continue;
+                    }
+
+                    // ★最適化: m2/m3 は遅延計算 (条件が m0 にマッチしてから計算)
+                    long m3 = rng.r3 % len2;
+                    long m2 = rng.r2 % 100;
+                    boolean hasS2 = m2 >= th;
+
+                    Charm c = null;
+                    for (int j : bucket) {
+                        int mode = fS2ModeArr[j];
+                        // 早期スキップ: 第2スキル位置による判定
+                        if (mode == 0) {
+                            // 特定スキル: 第2スキル発生 + 位置一致
+                            if (!hasS2 || m3 != fId2Arr[j]) continue;
+                        } else if (mode == 1) {
+                            // なし: 第2スキル不発生
+                            if (hasS2) continue;
+                        }
+                        // mode==2 (任意): 第2スキル有無問わず getCharm 実行
+
+                        if (c == null) {
+                            c = getCharm(rng, data, origin);
+                        }
+
+                        boolean match;
+                        if (mode == 0) {
+                            match = c.s2Name() != null
+                                    && c.sp1() >= fSp1Arr[j]
+                                    && c.sp2() >= fSp2Arr[j]
+                                    && c.slot() >= fSlotArr[j];
+                        } else if (mode == 1) {
+                            match = c.s2Name() == null
+                                    && c.sp1() >= fSp1Arr[j]
+                                    && c.slot() >= fSlotArr[j];
+                        } else {
+                            match = c.sp1() >= fSp1Arr[j]
+                                    && c.slot() >= fSlotArr[j];
+                        }
+
+                        if (match) {
+                            long frame = rng.f - 7;
+                            Object[] row = {frame, c, j};
+                            localResults.add(row);
+                            if (cb != null) cb.onFound(frame, c, j);
+                            break; // 1フレームに1回まで
+                        }
+                    }
+
+                    localDone++;
+                    if (localDone >= reportInterval) {
+                        int done = isSingleThread ? (i + 1) : globalDone.addAndGet(localDone);
+                        localDone = 0;
+                        if (pcb != null) pcb.onProgress(done, maxFrames);
+                    }
+                }
+                // 最後に残った進捗とローカル結果をフラッシュ
+                if (localDone > 0) {
+                    int done = isSingleThread ? localCount : globalDone.addAndGet(localDone);
+                    if (pcb != null) pcb.onProgress(done, maxFrames);
+                }
+                if (!localResults.isEmpty()) {
+                    allResults.addAll(localResults);
+                }
+            }));
+        }
+
+        for (Future<?> f : futures) {
+            try { f.get(); } catch (Exception ignored) {}
+        }
+        exec.shutdown();
+        if (pcb != null) pcb.onProgress(maxFrames, maxFrames);
+        allResults.sort((a, b) -> Long.compare((Long)a[0], (Long)b[0]));
+        return allResults;
+    }
+
+    /** 検索条件 (複数条件検索用) */
+    static class SearchCondition {
+        String s1;
+        int sp1;
+        String s2;
+        int sp2;
+        int slot;
+        SearchCondition(String s1, int sp1, String s2, int sp2, int slot) {
+            this.s1 = s1; this.sp1 = sp1; this.s2 = s2; this.sp2 = sp2; this.slot = slot;
+        }
+    }
+
+    interface MultiSearchCallback { void onFound(long frame, Charm charm, int conditionIndex); }
+
+    // ================================================================
+    // Aimpoint (孤立判定) - 本家 aimpoint_blue / aimpoint_quest 移植
+    //
+    // 概要:
+    //   ある目標フレームの周辺にどれだけ「狙い目」のフレームが集中しているか判定する。
+    //   狙い目が広いほど Continue 連打などフレーム精度が低い手段でも当たりやすい。
+    //
+    //   - aimpointBlue : マカ錬金 (お守り発生タイミングは均一、判定は前後に1〜3個)
+    //   - aimpointQuest: クエスト報酬 (条件によって乱数進行が変動、DP で連続ヒット数を計算)
+    // ================================================================
+
+    /**
+     * マカ錬金時の孤立判定 (本家 aimpoint_blue 移植).
+     * <p>
+     * 指定フレームを中心に、その周辺で同じお守りを得られる「狙い目」の数を数える。
+     * マカ錬金では、現在地から 9F descend した位置で w%100&lt;th なら同じお守りが出る、
+     * さらに 2F descend (=11F descend) した位置で w%100&gt;=th なら別の条件でも同じお守りが出る。
+     *
+     * @param data  お守りデータ (th が必要)
+     * @param frame 判定対象フレーム
+     * @return 狙い目の数 (1〜3, 最低1=自分自身)
+     */
+    public static int aimpointBlue(CharmData data, long frame) {
+        RNG rng = new RNG();
+        rng.jump(frame);
+        int aimPoints = 1; // 自分自身
+        // 9F descend
+        for (int i = 0; i < 9; i++) rng.descend();
+        if (rng.w % 100 < data.th) aimPoints++;
+        // さらに 2F descend (合計 11F)
+        for (int i = 0; i < 2; i++) rng.descend();
+        if (rng.w % 100 >= data.th) aimPoints++;
+        return aimPoints;
+    }
+
+    /** クエスト報酬時の孤立判定の結果を表すレコード */
+    record AimpointQuestResult(
+        int aimPointCount,    // 狙い目の数 (= b[i] <= num1 の数)
+        boolean[] isAim,      // 各フレームが狙い目か (length = num)
+        int[] consecutiveHits // 各フレームの連続ヒット数 b[i] (最良の累積パス)
+    ) {}
+
+    /**
+     * クエスト報酬時の孤立判定 (本家 aimpoint_quest 移植).
+     * <p>
+     * 指定フレームから前方 (num-1)*7+1 個のフレームに対し、
+     * クエスト報酬として「先頭から何個目のお守りまで連続ヒット可能か」を DP で計算する。
+     * 連続ヒット数が num1 以下のフレームを「狙い目」と判定する。
+     *
+     * @param data  お守りデータ (th が必要)
+     * @param frame 判定対象の起点フレーム
+     * @param num1  許容する連続ヒット数 (2 以上)
+     * @return 判定結果
+     */
+    public static AimpointQuestResult aimpointQuest(CharmData data, long frame, int num1) {
+        if (num1 < 2) num1 = 2;
+        int num = (num1 - 1) * 7 + 1;
+        long[] a = new long[num];
+        int[] b = new int[num];
+        Arrays.fill(b, num1 + 1);
+        b[0] = 1;
+
+        // 状態を frame に合わせ、descend×7 した後にさらに descend×(num-3) して a[3..] を埋める
+        RNG rng = new RNG();
+        rng.jump(frame);
+        for (int i = 0; i < 7; i++) rng.descend();
+        for (int i = 0; i < num - 3; i++) {
+            rng.descend();
+            a[i + 3] = rng.w & 0xFFFFFFFFL;
+        }
+        // 状態復元 (使わないが、副作用回避のため)
+        for (int i = 0; i < num + 4; i++) rng.ascend();
+
+        int th = data.th;
+        for (int i = 0; i < num; i++) {
+            if (i + 4 < num && a[i + 4] % 100 < th) {
+                b[i + 4] = Math.min(b[i + 4], b[i] + 1);
+            }
+            if (i + 7 < num && a[i + 7] % 100 >= th) {
+                b[i + 7] = Math.min(b[i + 7], b[i] + 1);
+            }
+        }
+
+        boolean[] isAim = new boolean[num];
+        int count = 0;
+        for (int i = 0; i < num; i++) {
+            isAim[i] = (b[i] <= num1);
+            if (isAim[i]) count++;
+        }
+        return new AimpointQuestResult(count, isAim, b);
+    }
+
 
     // ================================================================
     // Utility
@@ -263,130 +627,175 @@ public class MHXXCharmApp extends JFrame {
 
     // ================================================================
     // Reward Reverse (報酬逆算)
+    // 本家 search_reward (apmnnn氏のmhxx-rng) の完全移植
     // ================================================================
+
+    /** 採取ツアー報酬テーブル: アイテム名 → 累積閾値 (0..99) */
     static final String[] REWARD_ITEMS = {
         "謎の骨", "釣りミミズ", "生肉", "砥石",
         "力の成長餌", "重の成長餌", "速の成長餌"
     };
+    static final int[] REWARD_THRESHOLDS = {20, 40, 65, 85, 90, 95, 100};
 
-    static String rewardFromValue(int val) {
-        if (val < 20) return "謎の骨";
-        if (val < 40) return "釣りミミズ";
-        if (val < 65) return "生肉";
-        if (val < 85) return "砥石";
-        if (val < 90) return "力の成長餌";
-        if (val < 95) return "重の成長餌";
-        return "速の成長餌";
+    /** 100要素のルックアップテーブル: 値→アイテムindex (本家 reward_lookuptable 移植) */
+    static int[] rewardLookupTable() {
+        int[] lut = new int[100];
+        int prev = 0;
+        for (int i = 0; i < REWARD_THRESHOLDS.length; i++) {
+            int th = REWARD_THRESHOLDS[i];
+            for (int j = prev; j < th; j++) lut[j] = i;
+            prev = th;
+        }
+        return lut;
     }
 
+    /** インデックスからアイテム名を取得 */
+    static String rewardItemFromIndex(int idx) {
+        if (idx < 0 || idx >= REWARD_ITEMS.length) return "?";
+        return REWARD_ITEMS[idx];
+    }
+
+    /** 値(0..99)からアイテム名を取得 */
+    static String rewardFromValue(int val) {
+        for (int i = 0; i < REWARD_THRESHOLDS.length; i++) {
+            if (val < REWARD_THRESHOLDS[i]) return REWARD_ITEMS[i];
+        }
+        return REWARD_ITEMS[REWARD_ITEMS.length - 1];
+    }
+
+    /**
+     * 追加報酬数の判定 (本家 check_bonus 移植).
+     * <p>
+     * 4個の RNG 値について {@code (n & 0x1F) < bonusThreshold} を計算し、
+     * アイテム並びの長さ {@code len1} (4..8) に応じて以下を判定:
+     * <ul>
+     *   <li>len1 == 8: 全 True (追加報酬 4個成立)</li>
+     *   <li>len1 &lt; 8: flag[3] が False かつ flag[3-k:3] が全 True (k = len1 - 4)</li>
+     * </ul>
+     */
+    static boolean checkBonus(int len1, long n0, long n1, long n2, long n3, int bonusThreshold) {
+        boolean[] flag = {
+            (n0 & 0x1FL) < bonusThreshold,
+            (n1 & 0x1FL) < bonusThreshold,
+            (n2 & 0x1FL) < bonusThreshold,
+            (n3 & 0x1FL) < bonusThreshold
+        };
+        if (len1 == 8) {
+            return flag[0] && flag[1] && flag[2] && flag[3];
+        }
+        int k = len1 - 4;
+        if (flag[3]) return false;
+        for (int i = 3 - k; i < 3; i++) {
+            if (!flag[i]) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 報酬逆算の検索結果。
+     *
+     * @param frame    本家 j 相当の補正後フレーム (= 報酬画面で進行中の乱数位置)
+     * @param rewards  実際の報酬列 (補正後にお守り計算等に使う)
+     */
     record RewardSearchResult(long frame, String[] rewards) {}
 
     /**
-     * 報酬の個数と並びからフレームを逆算する。
+     * 報酬の個数と並びからフレームを逆算する (本家 search_reward 移植).
      *
-     * @param totalCount   報酬合計個数（通常＋追加）
-     * @param normalCount  通常報酬の固定枠数
-     * @param targetItems  各枠のアイテム名（長さ == totalCount）
-     * @param maxFrames    検索範囲
-     * @param cb           ヒット時コールバック（未使用、null可）
-     * @param pcb          進捗コールバック
-     * @param cancel       キャンセルフラグ
+     * @param targetItems   各枠のアイテム名 (長さ 4..8)
+     * @param maxFrames     検索範囲
+     * @param bonusThreshold  追加報酬閾値 (運気スキルなし=22, 幸運=25, 強運=28, 激運=31)
+     * @param pcb           進捗コールバック (null可)
+     * @param cancel        キャンセルフラグ (null可)
      * @return 候補フレームのリスト
      */
     static List<RewardSearchResult> reverseSearchRewards(
-            int totalCount, int normalCount, String[] targetItems, int maxFrames,
-            int addRewardThreshold,
-            SearchCallback cb, ProgressCallback pcb,
+            String[] targetItems, int maxFrames, int bonusThreshold,
+            ProgressCallback pcb,
             java.util.concurrent.atomic.AtomicBoolean cancel) {
 
-        int expectedAdditional = totalCount - normalCount;
-        if (expectedAdditional < 0 || expectedAdditional > 4) return Collections.emptyList();
-        if (totalCount < 1) return Collections.emptyList();
-        if (targetItems.length != totalCount) return Collections.emptyList();
-
-        int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
-        if (maxFrames < nThreads * 1000) nThreads = 1;
-
-        int chunkSize = maxFrames / nThreads;
-        java.util.concurrent.atomic.AtomicInteger globalDone = new java.util.concurrent.atomic.AtomicInteger(0);
-        List<RewardSearchResult> allResults = Collections.synchronizedList(new ArrayList<>());
-        ExecutorService exec = Executors.newFixedThreadPool(nThreads);
-        List<Future<?>> futures = new ArrayList<>();
-
-        for (int t = 0; t < nThreads; t++) {
-            final int startFrame = t * chunkSize;
-            final int endFrame = (t == nThreads - 1) ? maxFrames : (t + 1) * chunkSize;
-            futures.add(exec.submit(() -> {
-                RNG rng = new RNG();
-                rng.jumpRaw(startFrame);
-
-                int localCount = endFrame - startFrame;
-                int reportInterval = Math.max(1, maxFrames / 100);
-
-                for (int i = 0; i < localCount; i++) {
-                    if (cancel != null && cancel.get()) break;
-                    long currentFrame = startFrame + i;
-
-                    // RNG状態を退避
-                    long sx = rng.x, sy = rng.y, sz = rng.z, sw = rng.w;
-
-                    // Step1: 追加報酬数の判定
-                    int addCount = 0;
-                    for (int j = 0; j < 4; j++) {
-                        rng.ascend();
-                        if (rng.w % 32 < addRewardThreshold) {
-                            addCount++;
-                        } else {
-                            break; // breakOnFail=true（仮定）
-                        }
-                    }
-
-                    boolean match = false;
-                    String[] rewards = null;
-                    if (addCount == expectedAdditional) {
-                        // RNG状態を復元して再実行
-                        rng.x = sx; rng.y = sy; rng.z = sz; rng.w = sw;
-                        // 追加報酬判定を再消費
-                        for (int j = 0; j < 4; j++) {
-                            rng.ascend();
-                            if (rng.w % 32 < addRewardThreshold) {
-                                // continue
-                            } else {
-                                break;
-                            }
-                        }
-                        // Step2: 報酬内容チェック（通常報酬 + 追加報酬）
-                        match = true;
-                        rewards = new String[totalCount];
-                        for (int j = 0; j < totalCount; j++) {
-                            rng.ascend();
-                            int itemVal = (int)((rng.w & 0xFFFF) % 100);
-                            rewards[j] = rewardFromValue(itemVal);
-                            if (!rewards[j].equals(targetItems[j])) {
-                                match = false;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (match) {
-                        allResults.add(new RewardSearchResult(currentFrame, rewards));
-                    }
-
-                    // RNG状態を復元して1フレーム分だけ進める
-                    rng.x = sx; rng.y = sy; rng.z = sz; rng.w = sw;
-                    rng.ascend();
-
-                    int done = globalDone.incrementAndGet();
-                    if (pcb != null && done % reportInterval == 0) pcb.onProgress(done, maxFrames);
-                }
-            }));
+        if (targetItems == null || targetItems.length < 4 || targetItems.length > 8) {
+            return Collections.emptyList();
         }
 
-        for (Future<?> f : futures) {
-            try { f.get(); } catch (Exception ignored) {}
+        // アイテム名 → index
+        Map<String, Integer> rewardIndex = new HashMap<>();
+        for (int i = 0; i < REWARD_ITEMS.length; i++) {
+            rewardIndex.put(REWARD_ITEMS[i], i);
         }
-        exec.shutdown();
+        int[] targetIdx = new int[targetItems.length];
+        for (int i = 0; i < targetItems.length; i++) {
+            Integer idx = rewardIndex.get(targetItems[i]);
+            if (idx == null) return Collections.emptyList();
+            targetIdx[i] = idx;
+        }
+
+        int[] lut = rewardLookupTable();
+        final int len = targetItems.length;
+        final int correction = -Math.min(len - 3, 4);
+
+        // jump(0) → descend×7 した状態をスタート
+        // 並列化はせず単一スレッドでstride=1検索 (検索範囲が小さく十分高速)
+        // ただし maxFrames が大きい場合のために並列化も検討するが、
+        // search_stride 自体がKMPで O(N) なので並列化の効果は限定的
+        RNG rng = new RNG();
+        rng.jump(0);
+        for (int k = 0; k < 7; k++) rng.descend();
+
+        // KMP前方失敗関数
+        int[] pi = kmpPrefix(targetIdx);
+
+        // search_stride_nj 移植 (stride=1, ヒットを集める)
+        List<Long> hits = new ArrayList<>();
+        int n_A = targetIdx.length;
+        int kState = 0;
+        long jx = rng.x, jy = rng.y, jz = rng.z, jw = rng.w, jt = rng.t;
+        int reportInterval = Math.max(1, maxFrames / 100);
+
+        for (long i = 0; i < maxFrames; i++) {
+            if (cancel != null && cancel.get()) break;
+
+            int v = lut[(int)((jw & 0xFFFFL) % 100)];
+
+            // ascend
+            jt = (jx ^ (jx << 15)) & 0xFFFFFFFFL;
+            jx = jy; jy = jz; jz = jw;
+            jw = (jw ^ (jw >>> 21) ^ jt ^ (jt >>> 4)) & 0xFFFFFFFFL;
+
+            // KMP遷移
+            int kk = kState;
+            while (kk > 0 && targetIdx[kk] != v) kk = pi[kk - 1];
+            if (targetIdx[kk] == v) kk++;
+            if (kk == n_A) {
+                hits.add(i - (long)(n_A - 1));
+                kk = pi[n_A - 1];
+            }
+            kState = kk;
+
+            if (pcb != null && i % reportInterval == 0) {
+                pcb.onProgress((int)i, maxFrames);
+            }
+        }
+
+        // 各ヒットを check_bonus で検証
+        List<RewardSearchResult> allResults = new ArrayList<>();
+        for (Long iL : hits) {
+            if (cancel != null && cancel.get()) break;
+            long i = iL;
+            // jump(start + i - 7 - 1) して (x, y, z, w) を取得
+            long pos = i - 7 - 1;
+            if (pos < 0) continue; // 開始直後は不正
+            RNG check = new RNG();
+            check.jump(pos);
+            if (checkBonus(len, check.x, check.y, check.z, check.w, bonusThreshold)) {
+                long j = i + correction;
+                // 報酬列を再現 (表示用)
+                String[] rewards = new String[len];
+                System.arraycopy(targetItems, 0, rewards, 0, len);
+                allResults.add(new RewardSearchResult(j, rewards));
+            }
+        }
+
         if (pcb != null) pcb.onProgress(maxFrames, maxFrames);
         allResults.sort((a, b) -> Long.compare(a.frame(), b.frame()));
         return allResults;
@@ -452,11 +861,36 @@ public class MHXXCharmApp extends JFrame {
     JTable searchTable;
     JButton searchBtn;
 
+    // Multi search tab (複数条件検索)
+    JComboBox<String> multiSearchKind, multiSearchOrigin;
+    JTextField multiSearchRange;
+    JPanel multiCondListPanel;
+    java.util.List<MultiConditionRow> multiCondRows = new ArrayList<>();
+    DefaultTableModel multiSearchModel;
+    JTable multiSearchTable;
+    JButton multiSearchBtn;
+    // 条件番号 → 行の表示色 (条件別の色分け用)
+    static final Color[] MULTI_COND_COLORS = {
+        new Color(74, 144, 226, 70),   // 青
+        new Color(126, 211, 33, 70),   // 緑
+        new Color(245, 166, 35, 70),   // オレンジ
+        new Color(189, 16, 224, 70),   // 紫
+        new Color(255, 109, 109, 70),  // 赤
+        new Color(80, 227, 194, 70),   // ターコイズ
+        new Color(245, 215, 110, 70),  // 黄
+        new Color(208, 2, 27, 70),     // 暗赤
+    };
+
     // Around tab
     JTextField aroundFrame, aroundRadius;
     JComboBox<String> aroundOrigin;
     DefaultTableModel aroundModel;
     JTable aroundTable;
+
+    // Aimpoint (孤立判定 - 周辺表示タブに統合)
+    JTextField aimNum1;
+    JLabel aimResultLabel;
+    JTextArea aimVisualArea;
 
     // Timer tab - ラップタイマー + カウントダウン
     JLabel timerMainLabel, timerMainFramesLabel;
@@ -472,6 +906,15 @@ public class MHXXCharmApp extends JFrame {
     double targetSec = 0; // 目標時間（秒）。0=未設定
     javax.swing.Timer swingTimer;
 
+    // 主要アクションボタン (Ctrl+Enter ショートカット用)
+    JButton comboSnipeBtn;     // 調合スナイプ - 逆算開始
+    JButton questLoopCalcBtn;  // クエスト周回 - 主要アクション (スケッチ生成等)
+    JButton comboGen2Btn;      // 調合Arduino - コード2を生成
+    JButton rewardSearchBtn;   // 報酬逆算 - 検索開始
+
+    // 結果テーブルのモデル (Ctrl+L クリア用)
+    DefaultTableModel comboModel;
+
     // Famous tab
     DefaultTableModel famousModel;
     JTable famousTable;
@@ -481,7 +924,7 @@ public class MHXXCharmApp extends JFrame {
     JButton arduinoCalcBtn;
 
     // Reward Reverse tab (報酬逆算)
-    JComboBox<String> rewardTotalCount, rewardNormalCount;
+    JComboBox<String> rewardTotalCount;
     JComboBox<String>[] rewardItems;
     JLabel[] rewardLabels;
     JTextField rewardSearchRange;
@@ -514,6 +957,7 @@ public class MHXXCharmApp extends JFrame {
     JTextField comboDownKeysField;     // Lv2弾までの↓数
     JTextField comboArdCurrentFField;  // 調合Arduinoタブの「現在F (消費後)」
     JTextField comboArdTargetFField;   // 調合Arduinoタブの「目標F」（調合スナイプの目標Fと連動）
+    JTextField comboOffsetField;       // 調合Arduinoタブの「オフセットF」（実行開始→乱数決定までの実測フレーム）
     DefaultTableModel rewardModel;
     JTable rewardTable;
     JLabel rewardCalcResult;
@@ -558,15 +1002,22 @@ public class MHXXCharmApp extends JFrame {
         header.add(accentLine, BorderLayout.SOUTH);
         add(header, BorderLayout.NORTH);
 
-        // Tabs
+        // Tabs - 論理的にグループ化した順番:
+        //   [検索系] お守り検索 / 複数条件検索 / 周辺表示 / 有名お守り
+        //   [スナイプ] 調合スナイプ / 報酬逆算 / クエスト周回
+        //   [実行系] タイマー / キャリブレーション
+        //   [Arduino] Arduino / 調合Arduino
         tabs = new JTabbedPane();
         tabs.setBackground(BG);
         tabs.setForeground(FG);
         tabs.setFont(FONT_UI_BOLD);
         tabs.addTab(" お守り検索", buildSearchTab());
+        tabs.addTab(" 複数条件検索", buildMultiSearchTab());
         tabs.addTab(" 周辺表示", buildAroundTab());
+        tabs.addTab(" 有名お守り", buildFamousTab());
         tabs.addTab(" 調合スナイプ", buildComboSnipeTab());
-        tabs.addTab(" 調合Arduino", buildComboArduinoTab());
+        tabs.addTab(" 報酬逆算", buildRewardReverseTab());
+        tabs.addTab(" クエスト周回", buildQuestLoopTab());
         // タイマータブはJScrollPaneでラップ（縦長コンテンツに対応）
         JPanel timerInner = buildTimerTab();
         JScrollPane timerScroll = new JScrollPane(timerInner,
@@ -576,19 +1027,20 @@ public class MHXXCharmApp extends JFrame {
         timerScroll.getViewport().setBackground(BG);
         timerScroll.getVerticalScrollBar().setUnitIncrement(16);
         tabs.addTab(" タイマー", timerScroll);
-        tabs.addTab(" Arduino", buildArduinoTab());
-        tabs.addTab(" 報酬逆算", buildRewardReverseTab());
-        tabs.addTab(" クエスト周回", buildQuestLoopTab());
         tabs.addTab(" キャリブレーション", buildCalibrationTab());
-        tabs.addTab(" 有名お守り", buildFamousTab());
+        tabs.addTab(" Arduino", buildArduinoTab());
+        tabs.addTab(" 調合Arduino", buildComboArduinoTab());
         add(tabs, BorderLayout.CENTER);
+
+        // タブ並び替え後のキーボードショートカット・主要アクション登録
+        installGlobalKeyBindings();
 
         // Status bar with progress
         JPanel statusBar = new JPanel(new BorderLayout(8, 0));
         statusBar.setBackground(BG.darker());
         statusBar.setPreferredSize(new Dimension(0, 28));
         statusBar.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
-        statusLabel = new JLabel("Ready");
+        statusLabel = new JLabel("Ready  |  Ctrl+1〜9: タブ切替  |  Ctrl+Enter: 実行  |  Esc: 中止  |  Ctrl+L: 結果クリア  |  Ctrl+E: CSV保存");
         statusLabel.setFont(FONT_SMALL);
         statusLabel.setForeground(new Color(0x88, 0x88, 0x88));
         statusBar.add(statusLabel, BorderLayout.CENTER);
@@ -600,15 +1052,7 @@ public class MHXXCharmApp extends JFrame {
         statusBar.add(progressBar, BorderLayout.EAST);
         add(statusBar, BorderLayout.SOUTH);
 
-        // Global key bindings: Escape to cancel search
-        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
-                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancelSearch");
-        getRootPane().getActionMap().put("cancelSearch", new AbstractAction() {
-            @Override public void actionPerformed(ActionEvent e) {
-                cancelFlag.set(true);
-                statusLabel.setText("検索を中止しました");
-            }
-        });
+        // 重複していた Esc キーバインドは installGlobalKeyBindings() に統合済み
 
         // 設定の復元
         loadSettings();
@@ -653,6 +1097,7 @@ public class MHXXCharmApp extends JFrame {
             if (comboDownKeysField != null) props.setProperty("combo.downKeys", comboDownKeysField.getText());
             if (comboArdCurrentFField != null) props.setProperty("combo.ardCurrentF", comboArdCurrentFField.getText());
             if (comboArdTargetFField != null) props.setProperty("combo.ardTargetF", comboArdTargetFField.getText());
+            if (comboOffsetField != null) props.setProperty("combo.offset", comboOffsetField.getText());
 
             // 待機時間の補正
             if (adjTargetField != null) props.setProperty("adj.target", adjTargetField.getText());
@@ -727,6 +1172,8 @@ public class MHXXCharmApp extends JFrame {
             if (comboArdCurrentFField != null && !savedArdCurrent.isEmpty()) comboArdCurrentFField.setText(savedArdCurrent);
             String savedArdTarget = props.getProperty("combo.ardTargetF", "");
             if (comboArdTargetFField != null && !savedArdTarget.isEmpty()) comboArdTargetFField.setText(savedArdTarget);
+            String savedOffset = props.getProperty("combo.offset", "");
+            if (comboOffsetField != null && !savedOffset.isEmpty()) comboOffsetField.setText(savedOffset);
 
             // 待機時間の補正
             String savedAdjTarget = props.getProperty("adj.target", "");
@@ -1122,6 +1569,225 @@ public class MHXXCharmApp extends JFrame {
     }
 
     // ================================================================
+    // タブ名による動的タブ切替 (タブ並び替えに強い)
+    // ================================================================
+
+    /** タブ名 (前後の空白は無視) でタブのインデックスを取得。見つからなければ -1 */
+    int indexOfTab(String name) {
+        if (tabs == null || name == null) return -1;
+        String target = name.trim();
+        for (int i = 0; i < tabs.getTabCount(); i++) {
+            String t = tabs.getTitleAt(i);
+            if (t != null && t.trim().equals(target)) return i;
+        }
+        return -1;
+    }
+
+    /** タブ名で切替。見つからなければ何もしない */
+    void selectTab(String name) {
+        int idx = indexOfTab(name);
+        if (idx >= 0) tabs.setSelectedIndex(idx);
+    }
+
+    // ================================================================
+    // グローバルキーボードショートカット
+    // ================================================================
+
+    void installGlobalKeyBindings() {
+        // タブの並び順 (Ctrl+1 〜 Ctrl+9, Ctrl+0=10番目) でタブ番号アクセス
+        JRootPane root = getRootPane();
+        InputMap im = root.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW);
+        ActionMap am = root.getActionMap();
+        int mod = java.awt.Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx(); // Ctrl on Win/Linux, Cmd on Mac
+
+        // Ctrl+1〜9 で 1〜9番目のタブへ、Ctrl+0 で 10番目のタブへ
+        for (int i = 1; i <= 9; i++) {
+            final int idx = i - 1;
+            String key = "selectTab" + i;
+            im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_0 + i, mod), key);
+            am.put(key, new AbstractAction() {
+                @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+                    if (idx < tabs.getTabCount()) tabs.setSelectedIndex(idx);
+                }
+            });
+        }
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_0, mod), "selectTab10");
+        am.put("selectTab10", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+                if (tabs.getTabCount() >= 10) tabs.setSelectedIndex(9);
+            }
+        });
+
+        // Esc: 進行中の処理をキャンセル
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ESCAPE, 0), "cancelOp");
+        am.put("cancelOp", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+                cancelFlag.set(true);
+                if (statusLabel != null) statusLabel.setText("中止しました (Esc)");
+            }
+        });
+
+        // Ctrl+Enter: アクティブタブの主要アクション
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ENTER, mod), "primaryAction");
+        am.put("primaryAction", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+                runPrimaryActionOfCurrentTab();
+            }
+        });
+
+        // Ctrl+L: 結果テーブルをクリア
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_L, mod), "clearResults");
+        am.put("clearResults", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+                clearActiveTabResults();
+            }
+        });
+
+        // Ctrl+E: アクティブタブのCSVエクスポート
+        im.put(KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_E, mod), "exportActive");
+        am.put("exportActive", new AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) {
+                exportActiveTabCsv();
+            }
+        });
+    }
+
+    /** 現在のタブの主要アクションを実行する */
+    void runPrimaryActionOfCurrentTab() {
+        if (tabs == null) return;
+        String name = tabs.getTitleAt(tabs.getSelectedIndex()).trim();
+        switch (name) {
+            case "お守り検索"     -> { if (searchBtn != null) searchBtn.doClick(); }
+            case "複数条件検索"   -> { if (multiSearchBtn != null) multiSearchBtn.doClick(); }
+            case "周辺表示"       -> showAround();
+            case "調合スナイプ"   -> { if (comboSnipeBtn != null) comboSnipeBtn.doClick(); }
+            case "報酬逆算"       -> startRewardSearch();
+            case "クエスト周回"   -> { if (questLoopCalcBtn != null) questLoopCalcBtn.doClick(); }
+            case "タイマー"       -> { if (timerActionBtn != null) timerActionBtn.doClick(); }
+            case "キャリブレーション" -> { /* キャリブレーションは複数ボタンあり、特定不可 */ }
+            case "Arduino"         -> { /* Arduinoタブはコード生成ボタンが複数 */ }
+            case "調合Arduino"     -> { if (comboGen2Btn != null) comboGen2Btn.doClick(); }
+            case "有名お守り"      -> { /* 何もしない (リストのみ) */ }
+            default -> {}
+        }
+    }
+
+    /** 現在のタブの結果テーブルをクリアする */
+    void clearActiveTabResults() {
+        if (tabs == null) return;
+        String name = tabs.getTitleAt(tabs.getSelectedIndex()).trim();
+        DefaultTableModel m = switch (name) {
+            case "お守り検索"   -> searchModel;
+            case "複数条件検索" -> multiSearchModel;
+            case "周辺表示"     -> aroundModel;
+            case "調合スナイプ" -> comboModel;
+            case "報酬逆算"     -> rewardModel;
+            default -> null;
+        };
+        if (m != null) {
+            m.setRowCount(0);
+            if (statusLabel != null) statusLabel.setText("結果をクリアしました (Ctrl+L)");
+        }
+    }
+
+    /** 現在のタブの結果テーブルをCSV保存する */
+    void exportActiveTabCsv() {
+        if (tabs == null) return;
+        String name = tabs.getTitleAt(tabs.getSelectedIndex()).trim();
+        switch (name) {
+            case "お守り検索" -> exportCSV(searchModel,
+                    new String[]{"フレーム","第1スキル","SP1","第2スキル","SP2","スロット","待ち時間","レア度"});
+            case "複数条件検索" -> exportCSV(multiSearchModel,
+                    new String[]{"フレーム","条件#","第1スキル","SP1","第2スキル","SP2","スロット","待ち時間","レア度"});
+            case "周辺表示" -> exportCSV(aroundModel,
+                    new String[]{"差分","フレーム","第1スキル","SP1","第2スキル","SP2","スロット","レア度"});
+            case "有名お守り" -> exportCSV(famousModel,
+                    new String[]{"フレーム","第1スキル","SP1","第2スキル","SP2","スロット","待ち時間","当たりF範囲","種類"});
+            default -> {
+                if (statusLabel != null) statusLabel.setText("このタブはCSV保存に対応していません");
+            }
+        }
+    }
+
+    // ================================================================
+    // テーブル右クリック共通ヘルパー
+    // ================================================================
+
+    /**
+     * 結果テーブルに共通の右クリックメニュー (コピー・周辺表示・タイマー連携) を追加する.
+     * @param table  対象テーブル
+     * @param model  対応するTableModel
+     * @param frameColumnIndex フレーム値が入っている列のインデックス
+     * @param charmColumnIndex お守り情報を組み立てるための列範囲 (なしの場合 -1)
+     */
+    void addCommonResultMenu(JTable table, DefaultTableModel model, int frameColumnIndex,
+                              int s1ColumnIndex, int sp1ColumnIndex,
+                              int s2ColumnIndex, int sp2ColumnIndex,
+                              int slotColumnIndex) {
+        JPopupMenu popup = (JPopupMenu) table.getComponentPopupMenu();
+        if (popup == null) {
+            popup = new JPopupMenu();
+            table.setComponentPopupMenu(popup);
+        }
+
+        // フレーム値をコピー
+        JMenuItem copyFrame = new JMenuItem("フレーム値をコピー");
+        copyFrame.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) return;
+            int modelRow = table.convertRowIndexToModel(row);
+            Object v = model.getValueAt(modelRow, frameColumnIndex);
+            copyToClipboard(String.valueOf(v));
+            statusLabel.setText("フレーム値をコピー: " + v);
+        });
+        popup.add(copyFrame);
+
+        // お守り情報をコピー (s1〜slot 列が指定されている場合のみ)
+        if (s1ColumnIndex >= 0 && slotColumnIndex >= 0) {
+            JMenuItem copyCharm = new JMenuItem("お守り情報をコピー");
+            copyCharm.addActionListener(e -> {
+                int row = table.getSelectedRow();
+                if (row < 0) return;
+                int modelRow = table.convertRowIndexToModel(row);
+                String s1 = String.valueOf(model.getValueAt(modelRow, s1ColumnIndex));
+                String sp1 = String.valueOf(model.getValueAt(modelRow, sp1ColumnIndex));
+                String s2 = String.valueOf(model.getValueAt(modelRow, s2ColumnIndex));
+                String sp2 = String.valueOf(model.getValueAt(modelRow, sp2ColumnIndex));
+                String slot = String.valueOf(model.getValueAt(modelRow, slotColumnIndex));
+                String text = String.format("%s%s %s%s スロット%s",
+                        s1, sp1,
+                        s2.isEmpty() || "null".equals(s2) ? "" : s2,
+                        sp2.isEmpty() || "null".equals(sp2) || "0".equals(sp2) ? "" : sp2,
+                        slot);
+                copyToClipboard(text);
+                statusLabel.setText("お守り情報をコピー: " + text);
+            });
+            popup.add(copyCharm);
+        }
+
+        // 鑑定タイマーへ送る (フレーム値を appraiseTargetFrame にセット)
+        JMenuItem sendToTimer = new JMenuItem("鑑定タイマーへ送る (目標フレームに設定)");
+        sendToTimer.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) return;
+            int modelRow = table.convertRowIndexToModel(row);
+            Object v = model.getValueAt(modelRow, frameColumnIndex);
+            if (appraiseTargetFrame != null) {
+                appraiseTargetFrame.setText(String.valueOf(v));
+                updateAppraiseCalc();
+                statusLabel.setText("鑑定タイマーの目標フレームに設定: " + v);
+            }
+        });
+        popup.add(sendToTimer);
+    }
+
+    /** 文字列をクリップボードにコピー */
+    void copyToClipboard(String text) {
+        java.awt.datatransfer.StringSelection sel = new java.awt.datatransfer.StringSelection(text);
+        java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
+    }
+
+    // ================================================================
     // Search Tab
     // ================================================================
     JPanel buildSearchTab() {
@@ -1244,13 +1910,15 @@ public class MHXXCharmApp extends JFrame {
                         int modelRow = searchTable.convertRowIndexToModel(row);
                         Object val = searchModel.getValueAt(modelRow, 0);
                         aroundFrame.setText(val.toString());
-                        tabs.setSelectedIndex(1);
+                        selectTab("周辺表示");
                         showAround();
                     }
                 }
             }
         });
         addArduinoContextMenu(searchTable, searchModel, 0);
+        // 共通メニュー: フレーム値コピー / お守り情報コピー / 鑑定タイマーへ送る
+        addCommonResultMenu(searchTable, searchModel, 0, 1, 2, 3, 4, 5);
         JScrollPane sp = new JScrollPane(searchTable);
         setupScrollSpeed(sp);
         sp.getViewport().setBackground(BG2);
@@ -1264,6 +1932,7 @@ public class MHXXCharmApp extends JFrame {
 
     static final String S2_NONE = "（なし）";
     static final String S2_ANY  = "（任意）";
+    static final int[] EMPTY_INT_ARRAY = new int[0];
 
     String[] getSkill2NamesWithSpecial() {
         String[] base = data.getSkill2Names();
@@ -1274,12 +1943,37 @@ public class MHXXCharmApp extends JFrame {
         return result;
     }
 
+    /** 指定CharmDataに対する特殊値付きスキル2リスト */
+    static String[] skill2NamesWithSpecial(CharmData d) {
+        String[] base = d.getSkill2Names();
+        String[] result = new String[base.length + 2];
+        result[0] = S2_NONE;
+        result[1] = S2_ANY;
+        System.arraycopy(base, 0, result, 2, base.length);
+        return result;
+    }
+
+    /** お守り種別同期中の再帰防止フラグ */
+    boolean kindSyncing = false;
+
     void onKindChange() {
         String k = (String)searchKind.getSelectedItem();
         if (k.contains("風化")) data.setBlue();
         else if (k.contains("古びた")) data.setRed();
         else data.setYellow();
         onSearchCategoryChange(); // カテゴリフィルタも再適用
+
+        // 複数条件タブにも同期 (再帰防止)
+        if (!kindSyncing && multiSearchKind != null) {
+            kindSyncing = true;
+            try {
+                if (!k.equals(multiSearchKind.getSelectedItem())) {
+                    multiSearchKind.setSelectedItem(k);
+                }
+            } finally {
+                kindSyncing = false;
+            }
+        }
     }
 
     void onSearchCategoryChange() {
@@ -1452,6 +2146,441 @@ public class MHXXCharmApp extends JFrame {
     }
 
     // ================================================================
+    // Multi Search Tab (複数条件検索) - 本家 show_fast_multi 相当
+    // ================================================================
+
+    /** 複数条件検索の各行を表すコンポーネント群 */
+    static class MultiConditionRow {
+        JPanel panel;
+        JComboBox<String> s1Combo;
+        JComboBox<String> sp1Combo;
+        JComboBox<String> s2Combo;
+        JComboBox<String> sp2Combo;
+        JComboBox<String> slotCombo;
+        JLabel numberLabel;
+        JButton deleteBtn;
+        JLabel colorBadge; // 色分け用
+    }
+
+    JPanel buildMultiSearchTab() {
+        JPanel tab = new JPanel(new BorderLayout(8, 8));
+        tab.setBackground(BG);
+        tab.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+        // === 共通設定エリア ===
+        JPanel settings = titled("共通設定");
+        settings.setLayout(new BoxLayout(settings, BoxLayout.Y_AXIS));
+
+        // 説明
+        JPanel descRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        descRow.setOpaque(false);
+        JLabel desc = new JLabel(
+            "<html>複数の検索条件を OR で同時に検索する高速モード（本家 show_fast_multi 相当）。<br>" +
+            "全条件は <b>「以上検索」</b> で評価されます。第2スキルは「（なし）」「（任意）」も指定可能。<br>" +
+            "条件数が増えても各フレームの剰余計算は1回のみのため、単発検索を複数回するより高速です。</html>");
+        desc.setFont(FONT_SMALL);
+        desc.setForeground(DIM);
+        descRow.add(desc);
+        settings.add(descRow);
+
+        JPanel r1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        r1.setOpaque(false);
+        r1.add(label("お守り種別:"));
+        multiSearchKind = makeCombo(new String[]{"風化したお守り", "古びたお守り", "光るお守り"});
+        multiSearchKind.addActionListener(e -> onMultiKindChange());
+        r1.add(multiSearchKind);
+        r1.add(label("原産地:"));
+        multiSearchOrigin = makeCombo(new String[]{"マカ錬金", "クエスト（炭鉱）"});
+        r1.add(multiSearchOrigin);
+        r1.add(label("検索範囲:"));
+        multiSearchRange = makeField("1000000", 10);
+        multiSearchRange.setToolTipText("検索するフレーム数");
+        r1.add(multiSearchRange);
+        r1.add(label("F"));
+        settings.add(r1);
+
+        // === 条件リストエリア ===
+        JPanel condArea = titled("検索条件 (OR検索・以上検索)");
+        condArea.setLayout(new BorderLayout(4, 4));
+
+        multiCondListPanel = new JPanel();
+        multiCondListPanel.setLayout(new BoxLayout(multiCondListPanel, BoxLayout.Y_AXIS));
+        multiCondListPanel.setOpaque(false);
+        JScrollPane condScroll = new JScrollPane(multiCondListPanel);
+        condScroll.setPreferredSize(new Dimension(0, 200));
+        condScroll.setBorder(null);
+        condScroll.getViewport().setBackground(BG);
+        condArea.add(condScroll, BorderLayout.CENTER);
+
+        // 条件操作ボタン
+        JPanel condBtnRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        condBtnRow.setOpaque(false);
+        JButton addBtn = makeButton("＋ 行追加", BTN_BG);
+        addBtn.addActionListener(e -> addMultiCondRow(null, 0, null, 0, 3));
+        condBtnRow.add(addBtn);
+        JButton clearBtn = makeButton("条件をリセット", BTN_BG);
+        clearBtn.addActionListener(e -> resetMultiCondRows());
+        condBtnRow.add(clearBtn);
+        condArea.add(condBtnRow, BorderLayout.SOUTH);
+
+        // === 検索ボタン群 ===
+        JPanel actionRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        actionRow.setOpaque(false);
+        multiSearchBtn = makeButton("▶ 検索開始", ACCENT);
+        multiSearchBtn.addActionListener(e -> startMultiSearch());
+        actionRow.add(multiSearchBtn);
+        JButton cancelBtn = makeButton("■ 中止", BTN_BG);
+        cancelBtn.addActionListener(e -> {
+            cancelFlag.set(true);
+            statusLabel.setText("検索を中止しました");
+        });
+        actionRow.add(cancelBtn);
+        JButton exportBtn = makeButton("CSV保存", BTN_BG);
+        exportBtn.addActionListener(e -> exportCSV(multiSearchModel,
+                new String[]{"フレーム", "条件#", "第1スキル", "SP1", "第2スキル", "SP2",
+                             "スロット", "待ち時間", "レア度"}));
+        actionRow.add(exportBtn);
+
+        // === 北側に共通設定+条件リスト+ボタン ===
+        JPanel north = new JPanel();
+        north.setLayout(new BoxLayout(north, BoxLayout.Y_AXIS));
+        north.setOpaque(false);
+        north.add(settings);
+        north.add(Box.createVerticalStrut(4));
+        north.add(condArea);
+        north.add(Box.createVerticalStrut(4));
+        north.add(actionRow);
+        tab.add(north, BorderLayout.NORTH);
+
+        // === 結果テーブル ===
+        multiSearchModel = new DefaultTableModel(
+                new String[]{"フレーム", "条件#", "第1スキル", "SP1", "第2スキル", "SP2",
+                             "スロット", "待ち時間", "レア度"}, 0);
+        multiSearchTable = makeTable(multiSearchModel);
+        // 条件番号で行の背景色を変える
+        multiSearchTable.setDefaultRenderer(Object.class, new javax.swing.table.DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable table, Object value,
+                    boolean isSelected, boolean hasFocus, int row, int column) {
+                Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                if (!isSelected) {
+                    Object condIdxObj = table.getModel().getValueAt(row, 1);
+                    int condIdx = condIdxObj instanceof Integer ? (Integer)condIdxObj :
+                                  Integer.parseInt(condIdxObj.toString()) - 1;
+                    Color bg = MULTI_COND_COLORS[condIdx % MULTI_COND_COLORS.length];
+                    c.setBackground(bg);
+                    c.setForeground(FG);
+                }
+                return c;
+            }
+        });
+        // ダブルクリックで周辺表示
+        multiSearchTable.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    int row = multiSearchTable.getSelectedRow();
+                    if (row >= 0) {
+                        long frame = (Long) multiSearchModel.getValueAt(row, 0);
+                        aroundFrame.setText(String.valueOf(frame));
+                        selectTab("周辺表示");
+                        showAround();
+                    }
+                }
+            }
+        });
+        // メニュー: Arduinoコード生成 + 共通 (フレームコピー、お守り情報コピー、タイマー連携)
+        addArduinoContextMenu(multiSearchTable, multiSearchModel, 0);
+        addCommonResultMenu(multiSearchTable, multiSearchModel, 0, 2, 3, 4, 5, 6);
+        JScrollPane sp = new JScrollPane(multiSearchTable);
+        sp.getViewport().setBackground(BG);
+        tab.add(sp, BorderLayout.CENTER);
+
+        // 初期状態: 1行追加
+        addMultiCondRow(null, 0, null, 0, 3);
+
+        return tab;
+    }
+
+    /** お守り種別変更時に全条件行のスキル選択肢を更新 */
+    void onMultiKindChange() {
+        String kindStr = (String) multiSearchKind.getSelectedItem();
+        CharmData d = new CharmData();
+        if (kindStr.contains("古びた")) d.setRed();
+        else if (kindStr.contains("光る")) d.setYellow();
+        else d.setBlue();
+
+        String[] s1Names = d.getSkill1Names();
+        String[] s2Names = skill2NamesWithSpecial(d);
+
+        for (MultiConditionRow row : multiCondRows) {
+            String prevS1 = (String) row.s1Combo.getSelectedItem();
+            String prevS2 = (String) row.s2Combo.getSelectedItem();
+            row.s1Combo.setModel(new DefaultComboBoxModel<>(s1Names));
+            row.s2Combo.setModel(new DefaultComboBoxModel<>(s2Names));
+            safeSetItem(row.s1Combo, prevS1);
+            safeSetItem(row.s2Combo, prevS2);
+            updateMultiSpRanges(row, d);
+        }
+
+        // お守り検索タブにも同期 (再帰防止)
+        if (!kindSyncing && searchKind != null) {
+            kindSyncing = true;
+            try {
+                if (!kindStr.equals(searchKind.getSelectedItem())) {
+                    searchKind.setSelectedItem(kindStr);
+                }
+            } finally {
+                kindSyncing = false;
+            }
+        }
+    }
+
+    /** 条件行を追加 */
+    void addMultiCondRow(String s1, int sp1, String s2, int sp2, int slot) {
+        if (multiCondRows.size() >= MULTI_COND_COLORS.length) {
+            JOptionPane.showMessageDialog(this,
+                "条件は最大 " + MULTI_COND_COLORS.length + " 件までです",
+                "上限", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String kindStr = (String) multiSearchKind.getSelectedItem();
+        CharmData d = new CharmData();
+        if (kindStr != null && kindStr.contains("古びた")) d.setRed();
+        else if (kindStr != null && kindStr.contains("光る")) d.setYellow();
+        else d.setBlue();
+
+        MultiConditionRow row = new MultiConditionRow();
+        row.panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        row.panel.setOpaque(false);
+
+        // 色バッジ
+        int idx = multiCondRows.size();
+        row.colorBadge = new JLabel("●");
+        row.colorBadge.setForeground(new Color(
+            MULTI_COND_COLORS[idx].getRed(),
+            MULTI_COND_COLORS[idx].getGreen(),
+            MULTI_COND_COLORS[idx].getBlue(), 255));
+        row.colorBadge.setFont(FONT_LARGE);
+        row.panel.add(row.colorBadge);
+
+        row.numberLabel = label("#" + (idx + 1));
+        row.panel.add(row.numberLabel);
+
+        row.panel.add(label("第1:"));
+        row.s1Combo = makeFilterCombo(d.getSkill1Names());
+        if (s1 != null) safeSetItem(row.s1Combo, s1);
+        row.s1Combo.addActionListener(e -> updateMultiSpRanges(row, currentMultiCharmData()));
+        row.panel.add(row.s1Combo);
+        row.sp1Combo = makeCombo(new String[]{"1"});
+        row.panel.add(row.sp1Combo);
+
+        row.panel.add(label("第2:"));
+        row.s2Combo = makeFilterCombo(skill2NamesWithSpecial(d));
+        if (s2 != null) safeSetItem(row.s2Combo, s2);
+        else safeSetItem(row.s2Combo, S2_NONE); // デフォルトは「（なし）」
+        row.s2Combo.addActionListener(e -> updateMultiSpRanges(row, currentMultiCharmData()));
+        row.panel.add(row.s2Combo);
+        row.sp2Combo = makeCombo(new String[]{"1"});
+        row.panel.add(row.sp2Combo);
+
+        row.panel.add(label("S:"));
+        row.slotCombo = makeCombo(new String[]{"0", "1", "2", "3"});
+        row.slotCombo.setSelectedItem(String.valueOf(slot));
+        row.panel.add(row.slotCombo);
+
+        row.deleteBtn = makeButton("✕", BTN_BG);
+        row.deleteBtn.setToolTipText("この条件を削除");
+        row.deleteBtn.addActionListener(e -> removeMultiCondRow(row));
+        row.panel.add(row.deleteBtn);
+
+        multiCondRows.add(row);
+        multiCondListPanel.add(row.panel);
+
+        // 初期SP範囲設定
+        updateMultiSpRanges(row, d);
+        if (sp1 > 0) safeSetItem(row.sp1Combo, String.valueOf(sp1));
+        if (sp2 > 0) safeSetItem(row.sp2Combo, String.valueOf(sp2));
+
+        multiCondListPanel.revalidate();
+        multiCondListPanel.repaint();
+    }
+
+    /** 現在のお守り種別のCharmDataを返す */
+    CharmData currentMultiCharmData() {
+        String kindStr = (String) multiSearchKind.getSelectedItem();
+        CharmData d = new CharmData();
+        if (kindStr != null && kindStr.contains("古びた")) d.setRed();
+        else if (kindStr != null && kindStr.contains("光る")) d.setYellow();
+        else d.setBlue();
+        return d;
+    }
+
+    /** 条件行のSP範囲を更新 */
+    void updateMultiSpRanges(MultiConditionRow row, CharmData d) {
+        // SP1
+        String s1Name = (String) row.s1Combo.getSelectedItem();
+        int sid1 = skillNameToId(s1Name);
+        int idx1 = sid1 >= 0 ? indexOf(d.skill1, sid1) : -1;
+        if (idx1 >= 0) {
+            int min = d.sp1[idx1][0], max = d.sp1[idx1][1];
+            String[] vals = new String[max - min + 1];
+            for (int i = 0; i < vals.length; i++) vals[i] = String.valueOf(min + i);
+            String prev = (String) row.sp1Combo.getSelectedItem();
+            row.sp1Combo.setModel(new DefaultComboBoxModel<>(vals));
+            safeSetItem(row.sp1Combo, prev);
+            if (row.sp1Combo.getSelectedIndex() < 0) {
+                row.sp1Combo.setSelectedIndex(vals.length - 1);
+            }
+        }
+        // SP2: 「なし/任意」のときは無効化
+        String s2Name = (String) row.s2Combo.getSelectedItem();
+        boolean s2Special = S2_NONE.equals(s2Name) || S2_ANY.equals(s2Name);
+        if (s2Special) {
+            row.sp2Combo.setModel(new DefaultComboBoxModel<>(new String[]{"-"}));
+            row.sp2Combo.setEnabled(false);
+            row.sp2Combo.setToolTipText(S2_NONE.equals(s2Name)
+                ? "「なし」のため SP2 は使用しません"
+                : "「任意」のため SP2 は使用しません");
+        } else {
+            row.sp2Combo.setEnabled(true);
+            row.sp2Combo.setToolTipText(null);
+            int sid2 = skillNameToId(s2Name);
+            int idx2 = sid2 >= 0 ? indexOf(d.skill2, sid2) : -1;
+            if (idx2 >= 0) {
+                int max = d.sp2[idx2][1];
+                int min = 1;
+                String[] vals = new String[max - min + 1];
+                for (int i = 0; i < vals.length; i++) vals[i] = String.valueOf(min + i);
+                String prev = (String) row.sp2Combo.getSelectedItem();
+                row.sp2Combo.setModel(new DefaultComboBoxModel<>(vals));
+                safeSetItem(row.sp2Combo, prev);
+                if (row.sp2Combo.getSelectedIndex() < 0) {
+                    row.sp2Combo.setSelectedIndex(vals.length - 1);
+                }
+            }
+        }
+    }
+
+    /** 条件行を削除 */
+    void removeMultiCondRow(MultiConditionRow row) {
+        if (multiCondRows.size() <= 1) {
+            JOptionPane.showMessageDialog(this, "最低1件の条件が必要です", "エラー", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        multiCondRows.remove(row);
+        multiCondListPanel.remove(row.panel);
+        // 番号と色バッジを振り直し
+        for (int i = 0; i < multiCondRows.size(); i++) {
+            MultiConditionRow r = multiCondRows.get(i);
+            r.numberLabel.setText("#" + (i + 1));
+            r.colorBadge.setForeground(new Color(
+                MULTI_COND_COLORS[i].getRed(),
+                MULTI_COND_COLORS[i].getGreen(),
+                MULTI_COND_COLORS[i].getBlue(), 255));
+        }
+        multiCondListPanel.revalidate();
+        multiCondListPanel.repaint();
+    }
+
+    /** 条件をすべてクリアして1行だけ残す */
+    void resetMultiCondRows() {
+        multiCondRows.clear();
+        multiCondListPanel.removeAll();
+        addMultiCondRow(null, 0, null, 0, 3);
+    }
+
+    /** 複数条件検索を開始 */
+    void startMultiSearch() {
+        cancelFlag.set(false);
+        multiSearchModel.setRowCount(0);
+
+        if (multiCondRows.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "条件が空です", "エラー", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        int maxF;
+        try {
+            maxF = Integer.parseInt(multiSearchRange.getText().trim());
+            if (maxF <= 0) throw new NumberFormatException();
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "検索範囲を正しく入力してください", "エラー", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        CharmData d = currentMultiCharmData();
+        int origin = ((String) multiSearchOrigin.getSelectedItem()).contains("マカ") ? 0 : 1;
+
+        // 条件リスト構築
+        List<SearchCondition> conditions = new ArrayList<>();
+        for (int i = 0; i < multiCondRows.size(); i++) {
+            MultiConditionRow row = multiCondRows.get(i);
+            try {
+                String s1 = (String) row.s1Combo.getSelectedItem();
+                String s2 = (String) row.s2Combo.getSelectedItem();
+                int sp1 = Integer.parseInt((String) row.sp1Combo.getSelectedItem());
+                // s2 が「なし/任意」のとき sp2 は無視されるが、安全のため 0 を渡す
+                boolean s2Special = S2_NONE.equals(s2) || S2_ANY.equals(s2);
+                int sp2 = s2Special ? 0 : Integer.parseInt((String) row.sp2Combo.getSelectedItem());
+                int slot = Integer.parseInt((String) row.slotCombo.getSelectedItem());
+                conditions.add(new SearchCondition(s1, sp1, s2, sp2, slot));
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this,
+                    "条件#" + (i + 1) + " の入力が不正です: " + ex.getMessage(),
+                    "エラー", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+
+        final List<SearchCondition> fConds = conditions;
+        final int fMaxF = maxF;
+        final int fOrigin = origin;
+        final CharmData fData = d;
+
+        multiSearchBtn.setEnabled(false);
+        statusLabel.setText("複数条件検索中...");
+        progressBar.setValue(0);
+        progressBar.setVisible(true);
+
+        Thread.ofVirtual().start(() -> {
+            long t0 = System.currentTimeMillis();
+            try {
+                List<Object[]> results = searchCharmMulti(fData, fConds, fOrigin, fMaxF,
+                    (frame, charm, condIdx) -> SwingUtilities.invokeLater(() -> {
+                        multiSearchModel.addRow(new Object[]{
+                            frame, condIdx + 1, charm.s1Name(), charm.sp1(),
+                            charm.s2Display(), charm.sp2Display(), charm.slot(),
+                            framesToTime(frame), "R" + charm.rare()
+                        });
+                    }),
+                    (done, total) -> SwingUtilities.invokeLater(() -> {
+                        int pct = (int) ((long) done * 100 / total);
+                        progressBar.setValue(pct);
+                        statusLabel.setText(String.format("複数条件検索中... %d%% (%d件ヒット)",
+                            pct, multiSearchModel.getRowCount()));
+                    }),
+                    cancelFlag);
+                double elapsed = (System.currentTimeMillis() - t0) / 1000.0;
+                SwingUtilities.invokeLater(() -> {
+                    multiSearchBtn.setEnabled(true);
+                    progressBar.setVisible(false);
+                    statusLabel.setText(String.format("複数条件検索完了: %d件 (%.2f秒)",
+                        results.size(), elapsed));
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> {
+                    multiSearchBtn.setEnabled(true);
+                    progressBar.setVisible(false);
+                    statusLabel.setText("検索エラー: " + ex.getMessage());
+                    JOptionPane.showMessageDialog(this, ex.getMessage(),
+                        "検索エラー", JOptionPane.ERROR_MESSAGE);
+                });
+            }
+        });
+    }
+
+    // ================================================================
     // Around Tab
     // ================================================================
     JPanel buildAroundTab() {
@@ -1459,7 +2588,7 @@ public class MHXXCharmApp extends JFrame {
         tab.setBackground(BG);
         tab.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
 
-        JPanel settings = titled("周辺お守り表示");
+        JPanel settings = titled("周辺お守り表示・孤立判定");
         settings.setLayout(new FlowLayout(FlowLayout.LEFT, 8, 8));
         settings.add(label("フレーム位置:"));
         aroundFrame = makeField("", 10);
@@ -1471,12 +2600,22 @@ public class MHXXCharmApp extends JFrame {
         settings.add(aroundRadius);
         settings.add(label("原産地:"));
         aroundOrigin = makeCombo(new String[]{"マカ錬金","クエスト（炭鉱）"});
+        aroundOrigin.addActionListener(e -> updateAimNum1Enabled());
         settings.add(aroundOrigin);
+        settings.add(label("許容ヒット数:"));
+        aimNum1 = makeField("3", 4);
+        aimNum1.setToolTipText("クエスト時の連続ヒット許容数 (2以上)。低いほど厳しい");
+        aimNum1.addActionListener(e -> showAround());
+        settings.add(aimNum1);
         JButton btn = makeButton("▶ 表示", ACCENT);
         btn.addActionListener(e -> showAround());
         settings.add(btn);
         tab.add(settings, BorderLayout.NORTH);
 
+        // 初期状態を反映 (マカ時は許容ヒット数を無効化)
+        updateAimNum1Enabled();
+
+        // 周辺表示テーブル
         aroundModel = new DefaultTableModel(
                 new String[]{"差分","フレーム","第1スキル","SP1","第2スキル","SP2","スロット","レア度"}, 0);
         aroundTable = makeTable(aroundModel);
@@ -1514,16 +2653,57 @@ public class MHXXCharmApp extends JFrame {
             }
         });
 
+        // 右クリックメニュー (Arduino + 共通)
+        // aroundModel の列: 差分(0) | フレーム(1) | s1(2) | sp1(3) | s2(4) | sp2(5) | スロット(6) | レア度(7)
+        addArduinoContextMenu(aroundTable, aroundModel, 1);
+        addCommonResultMenu(aroundTable, aroundModel, 1, 2, 3, 4, 5, 6);
+
         JScrollPane sp = new JScrollPane(aroundTable);
         setupScrollSpeed(sp);
         sp.getViewport().setBackground(BG2);
-        JPanel rp = titled("結果 (水色=ロードブレ±30F圏内 / 黄色=中心フレーム)");
+        JPanel rp = titled("周辺表示 (水色=ロードブレ±30F圏内 / 黄色=中心フレーム)");
         rp.setLayout(new BorderLayout());
         rp.add(sp, BorderLayout.CENTER);
-        tab.add(rp, BorderLayout.CENTER);
+
+        // 孤立判定パネル
+        JPanel aimPanel = titled("孤立判定");
+        aimPanel.setLayout(new BorderLayout(4, 4));
+        aimResultLabel = new JLabel("フレームを入力して「▶ 表示」を押してください");
+        aimResultLabel.setFont(FONT_LARGE);
+        aimResultLabel.setForeground(ACCENT);
+        aimResultLabel.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+        aimPanel.add(aimResultLabel, BorderLayout.NORTH);
+        aimVisualArea = new JTextArea(6, 50);
+        aimVisualArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 16));
+        aimVisualArea.setEditable(false);
+        aimVisualArea.setBackground(BG);
+        aimVisualArea.setForeground(FG);
+        aimVisualArea.setLineWrap(false);
+        JScrollPane aimSp = new JScrollPane(aimVisualArea);
+        aimSp.getViewport().setBackground(BG);
+        aimPanel.add(aimSp, BorderLayout.CENTER);
+
+        // 上下スプリット (上=周辺表示, 下=孤立判定)
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, rp, aimPanel);
+        split.setResizeWeight(0.65); // 周辺表示に多めの領域
+        split.setBorder(null);
+        split.setDividerSize(6);
+        split.setBackground(BG);
+        tab.add(split, BorderLayout.CENTER);
 
         return tab;
     }
+
+    /** 原産地に応じて許容ヒット数フィールドの有効/無効を切替 */
+    void updateAimNum1Enabled() {
+        if (aroundOrigin == null || aimNum1 == null) return;
+        boolean isQuest = ((String) aroundOrigin.getSelectedItem()).contains("クエスト");
+        aimNum1.setEnabled(isQuest);
+        aimNum1.setToolTipText(isQuest
+            ? "連続ヒット許容数 (2以上)。低いほど厳しい"
+            : "クエスト原産地のときのみ使用");
+    }
+
 
     void showAround() {
         aroundModel.setRowCount(0);
@@ -1539,18 +2719,80 @@ public class MHXXCharmApp extends JFrame {
         CharmData d = new CharmData();
         if (data.kind == 0) d.setBlue(); else if (data.kind == 1) d.setRed(); else if (data.kind == 2) d.setYellow();
 
+        // 許容ヒット数 (クエスト時のみ使用、不正値は3にフォールバック)
+        int num1Tmp = 3;
+        try {
+            num1Tmp = Integer.parseInt(aimNum1.getText().trim());
+            if (num1Tmp < 2) num1Tmp = 2;
+        } catch (NumberFormatException ignored) {}
+        final int num1 = num1Tmp;
+        final long fFrame = frame;
+        final boolean isQuest = (origin == 1);
+        final CharmData fData = d;
+
         statusLabel.setText("周辺お守りを計算中...");
         Thread.ofVirtual().start(() -> {
             List<Object[]> results = getAround(d, frame, radius, origin);
+
+            // 孤立判定 (原産地に応じて切替)
+            String aimSummary;
+            String aimDetail;
+            if (isQuest) {
+                AimpointQuestResult ar = aimpointQuest(fData, fFrame, num1);
+                aimSummary = String.format("クエスト孤立判定: %d個の狙い目 (許容ヒット=%d, 検査範囲=%dF)",
+                    ar.aimPointCount(), num1, ar.isAim().length);
+                StringBuilder sb = new StringBuilder();
+                sb.append(String.format("起点: F=%d  許容ヒット数: %d\n\n", fFrame, num1));
+                sb.append("オフセット →[0] が起点フレーム、左へ進むほど未来\n\n");
+                int len = ar.isAim().length;
+                StringBuilder line = new StringBuilder();
+                for (int i = len - 1; i >= 0; i--) {
+                    if (i % 10 == 0 && i != 0) line.append(' ');
+                    if (i == 0) line.append('[');
+                    line.append(ar.isAim()[i] ? '◯' : 'Ｘ');
+                }
+                line.append(']');
+                sb.append(line.toString()).append("\n\n");
+                sb.append("狙い目フレーム (連続ヒット数 b[i] ≦ ").append(num1).append("):\n");
+                int[] consec = ar.consecutiveHits();
+                int shown = 0;
+                for (int i = 0; i < len; i++) {
+                    if (ar.isAim()[i]) {
+                        sb.append(String.format("  +%-4d : F=%-10d (b=%d)\n", i, fFrame + i, consec[i]));
+                        shown++;
+                        if (shown >= 30) {
+                            sb.append("  ... (省略)\n");
+                            break;
+                        }
+                    }
+                }
+                aimDetail = sb.toString();
+            } else {
+                int aim = aimpointBlue(fData, fFrame);
+                aimSummary = String.format("マカ錬金孤立判定: %d個の狙い目 (周辺3F幅)", aim);
+                StringBuilder sb = new StringBuilder();
+                sb.append(String.format("起点: F=%d\n\n", fFrame));
+                sb.append("狙い目数の意味:\n");
+                sb.append("  1 = 完全に孤立 (このフレームのみで当たる)\n");
+                sb.append("  2 = 直前/直後どちらかにも別の判定タイミングあり\n");
+                sb.append("  3 = 前後ともにあり (フレーム精度が低くても当たりやすい)\n\n");
+                sb.append("結果: ").append("●".repeat(aim)).append("○".repeat(3 - aim))
+                    .append(String.format(" (%d / 3)\n", aim));
+                aimDetail = sb.toString();
+            }
+
             SwingUtilities.invokeLater(() -> {
                 for (Object[] ro : results) {
                     long f = (Long) ro[0];
                     Charm c = (Charm) ro[1];
-                    long offset = f - frame;
+                    long offset = f - fFrame;
                     String offs = offset == 0 ? "★ 0" : String.format("%+d", offset);
                     aroundModel.addRow(new Object[]{offs, f, c.s1Name(), c.sp1(),
                             c.s2Display(), c.sp2Display(), c.slot(), "R" + c.rare()});
                 }
+                aimResultLabel.setText(aimSummary);
+                aimVisualArea.setText(aimDetail);
+                aimVisualArea.setCaretPosition(0);
                 statusLabel.setText("周辺表示完了: " + results.size() + "件");
             });
         });
@@ -1572,32 +2814,31 @@ public class MHXXCharmApp extends JFrame {
         JPanel descRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         descRow.setOpaque(false);
         JLabel desc = new JLabel(
-            "<html>クエスト報酬画面に表示されたアイテムの合計個数と並びを入力し、現在フレームを特定します。<br>" +
-            "通常報酬枠数は実機で確認して設定してください（不明なら0で試行）。</html>");
+            "<html>クエスト報酬画面に表示されたアイテムの並びを入力し、現在進行中の乱数位置を特定します。<br>" +
+            "採取ツアーは通常4個固定 + 追加報酬0〜4個 = 合計4〜8個。<br>" +
+            "追加報酬閾値は運気スキルにより変動 (なし=22, 幸運=25, 強運=28, 激運=31)。</html>");
         desc.setFont(FONT_SMALL);
         desc.setForeground(DIM);
         descRow.add(desc);
         settings.add(descRow);
 
-        // Row 1: 通常報酬枠数 + 合計報酬個数
+        // Row 1: 報酬個数
         JPanel r1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         r1.setOpaque(false);
-        r1.add(label("通常報酬枠数:"));
-        rewardNormalCount = makeCombo(new String[]{"0","1","2","3","4","5","6"});
-        rewardNormalCount.setToolTipText("通常報酬の固定枠数（実機確認で確定、不明なら0）");
-        r1.add(rewardNormalCount);
-        r1.add(label("   報酬合計個数:"));
-        rewardTotalCount = makeCombo(new String[]{"1","2","3","4","5","6","7","8","9","10"});
-        rewardTotalCount.setToolTipText("報酬画面に表示されたアイテムの合計個数（通常＋追加）");
+        r1.add(label("報酬個数:"));
+        rewardTotalCount = makeCombo(new String[]{"4","5","6","7","8"});
+        rewardTotalCount.setSelectedItem("4");
+        rewardTotalCount.setToolTipText("報酬画面に表示されたアイテムの合計個数 (4〜8、本家準拠)");
         r1.add(rewardTotalCount);
+        r1.add(label("個"));
         settings.add(r1);
 
-        // Row 2: アイテム選択（最大10枠分）
+        // Row 2: アイテム選択（最大8枠分）
         JPanel r2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         r2.setOpaque(false);
-        rewardItems = new JComboBox[10];
-        rewardLabels = new JLabel[10];
-        for (int i = 0; i < 10; i++) {
+        rewardItems = new JComboBox[8];
+        rewardLabels = new JLabel[8];
+        for (int i = 0; i < 8; i++) {
             rewardLabels[i] = label((i + 1) + ":");
             r2.add(rewardLabels[i]);
             rewardItems[i] = makeCombo(REWARD_ITEMS);
@@ -1608,7 +2849,7 @@ public class MHXXCharmApp extends JFrame {
         // 個数変更時にコンボボックスの表示/非表示を切り替え
         Runnable updateRewardVisibility = () -> {
             int total = Integer.parseInt((String)rewardTotalCount.getSelectedItem());
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < 8; i++) {
                 boolean visible = i < total;
                 rewardLabels[i].setVisible(visible);
                 rewardItems[i].setVisible(visible);
@@ -1617,7 +2858,7 @@ public class MHXXCharmApp extends JFrame {
             r2.repaint();
         };
         rewardTotalCount.addActionListener(e -> updateRewardVisibility.run());
-        // 初期状態（1個）
+        // 初期状態 (4個)
         updateRewardVisibility.run();
 
         // Row 3: 検索範囲・ボタン
@@ -1635,6 +2876,7 @@ public class MHXXCharmApp extends JFrame {
             "通常=22 / 激運・幸運時は変動（具体値は実機検証が必要）</html>");
         r3.add(rewardThreshold);
         JButton searchBtn = makeButton("▶ 逆算開始", ACCENT);
+        rewardSearchBtn = searchBtn;  // Ctrl+Enter ショートカット用
         searchBtn.addActionListener(e -> startRewardSearch());
         r3.add(searchBtn);
         JButton cancelBtn = makeButton("■ 中止", BTN_BG);
@@ -1667,13 +2909,15 @@ public class MHXXCharmApp extends JFrame {
                         Object val = rewardModel.getValueAt(modelRow, 0);
                         aroundFrame.setText(val.toString());
                         aroundOrigin.setSelectedIndex(1); // クエスト産
-                        tabs.setSelectedIndex(1);
+                        selectTab("周辺表示");
                         showAround();
                     }
                 }
             }
         });
         addArduinoContextMenu(rewardTable, rewardModel, 0);
+        // 共通メニュー: フレーム値コピー / 鑑定タイマーへ送る (お守り情報列は単一文字列のため省略)
+        addCommonResultMenu(rewardTable, rewardModel, 0, -1, -1, -1, -1, -1);
 
         // 行選択時に基準フレームを自動セット
         rewardTable.getSelectionModel().addListSelectionListener(e -> {
@@ -1798,12 +3042,11 @@ public class MHXXCharmApp extends JFrame {
             long target = Long.parseLong(appraiseTargetFrame.getText().trim());
             long base = Long.parseLong(appraiseBaseFrame.getText().trim());
 
-            // 報酬生成終了フレーム = base + addJudge + totalCount
-            int totalCount = Integer.parseInt((String)rewardTotalCount.getSelectedItem());
-            int normalCount = Integer.parseInt((String)rewardNormalCount.getSelectedItem());
-            int additionalExpected = totalCount - normalCount;
-            int addJudge = (additionalExpected < 4) ? additionalExpected + 1 : 4;
-            long rewardEnd = base + addJudge + totalCount;
+            // 本家準拠: 報酬逆算結果のフレーム値 (= base) は
+            // 「報酬画面表示時点の現在進行中の乱数位置」をそのまま示す。
+            // よって rewardEnd = base。報酬画面表示と同時にタイマーを開始すれば、
+            // target - base フレーム分待ってからお守りを投入すればよい。
+            long rewardEnd = base;
 
             appraiseRewardEndLabel.setText(String.valueOf(rewardEnd));
 
@@ -1903,11 +3146,10 @@ public class MHXXCharmApp extends JFrame {
         cancelFlag.set(false);
         rewardModel.setRowCount(0);
 
-        int totalCount, normalCount, maxF;
+        int totalCount, maxF;
         int threshold;
         try {
             totalCount = Integer.parseInt((String)rewardTotalCount.getSelectedItem());
-            normalCount = Integer.parseInt((String)rewardNormalCount.getSelectedItem());
             maxF = Integer.parseInt(rewardSearchRange.getText().trim());
             threshold = Integer.parseInt(rewardThreshold.getText().trim());
         } catch (NumberFormatException ex) {
@@ -1915,11 +3157,9 @@ public class MHXXCharmApp extends JFrame {
             return;
         }
 
-        int additionalExpected = totalCount - normalCount;
-        if (additionalExpected < 0 || additionalExpected > 4) {
+        if (totalCount < 4 || totalCount > 8) {
             JOptionPane.showMessageDialog(this,
-                "追加報酬枠数（合計 - 通常）が0〜4の範囲になるように設定してください。\n" +
-                "現在: 合計" + totalCount + " - 通常" + normalCount + " = " + additionalExpected,
+                "報酬個数は 4〜8 の範囲で指定してください (本家準拠)。",
                 "エラー", JOptionPane.ERROR_MESSAGE);
             return;
         }
@@ -1929,11 +3169,14 @@ public class MHXXCharmApp extends JFrame {
             targetItems[i] = (String)rewardItems[i].getSelectedItem();
         }
 
+        // 追加報酬数 (= 合計 - 通常4個固定)
+        final int additionalCount = totalCount - 4;
+
         CharmData d = new CharmData();
         d.setBlue(); // 風化したお守り
 
-        final int fNormalCount = normalCount;
         final int fThreshold = threshold;
+        final int fMaxF = maxF;
 
         statusLabel.setText("報酬逆算中...");
         progressBar.setValue(0);
@@ -1942,8 +3185,7 @@ public class MHXXCharmApp extends JFrame {
         Thread.ofVirtual().start(() -> {
             long t0 = System.currentTimeMillis();
             List<RewardSearchResult> results = reverseSearchRewards(
-                    totalCount, fNormalCount, targetItems, maxF,
-                    fThreshold, null,
+                    targetItems, fMaxF, fThreshold,
                     (done, total) -> SwingUtilities.invokeLater(() -> {
                         int pct = (int)((long)done * 100 / total);
                         progressBar.setValue(pct);
@@ -1953,14 +3195,10 @@ public class MHXXCharmApp extends JFrame {
 
             SwingUtilities.invokeLater(() -> {
                 for (RewardSearchResult rsr : results) {
-                    // 報酬消費後のフレーム:
-                    // 追加報酬判定消費 + 通常報酬内容消費 + 追加報酬内容消費
-                    int addJudge = (additionalExpected < 4) ? additionalExpected + 1 : 4;
-                    long charmFrame = rsr.frame + addJudge + totalCount;
-
+                    // 本家準拠: rsr.frame は「現在進行中の乱数位置」(報酬画面表示時点)
+                    // クエスト報酬のお守りはこの位置から jump+roll×7 で得られる
                     RNG charmRng = new RNG();
-                    charmRng.jump(charmFrame);
-                    for (int j = 0; j < 7; j++) charmRng.roll();
+                    charmRng.jump(rsr.frame);
                     Charm charm = getCharm(charmRng, d, 1);
 
                     String rewardStr = String.join(", ", rsr.rewards);
@@ -1969,7 +3207,7 @@ public class MHXXCharmApp extends JFrame {
                         + " s" + charm.slot();
 
                     rewardModel.addRow(new Object[]{
-                        rsr.frame, rewardStr, additionalExpected,
+                        rsr.frame, rewardStr, additionalCount,
                         framesToTime(rsr.frame), charmStr
                     });
                 }
@@ -1978,7 +3216,7 @@ public class MHXXCharmApp extends JFrame {
                 progressBar.setVisible(false);
                 statusLabel.setText(String.format("報酬逆算完了: %d件 (%.2f秒)", results.size(), elapsed));
                 if (results.isEmpty()) {
-                    rewardCalcResult.setText("候補なし — 報酬テーブルや個数が正しいか確認してください");
+                    rewardCalcResult.setText("候補なし — アイテムの並び・閾値・運気スキルを確認してください");
                     rewardCalcResult.setForeground(WARN);
                 } else {
                     rewardCalcResult.setText(results.size() + "件の候補フレームが見つかりました");
@@ -3212,6 +4450,7 @@ public class MHXXCharmApp extends JFrame {
         // Step 4: 自宅へ移動（X→A×2）
         sb.append("    // Step 4: 自宅へ移動（ワールドマップ → 自宅選択）\n");
         sb.append("    //   ロード直後は村スタートのため、自宅まで移動する必要がある\n");
+        sb.append("    pushButton(Button::L, 100, 5);\n");
         sb.append("    pushButton(Button::X, 250);\n");
         sb.append("    pushButton(Button::A, 250, 2);\n");
         sb.append("    delay(3000); // 自宅へのロード待ち\n\n");
@@ -3237,11 +4476,11 @@ public class MHXXCharmApp extends JFrame {
         }
         sb.append("    pushButton(Button::A, 1000);      // Aで決定 → 調合確認画面\n\n");
 
-        // Step 7: A長押しで連続調合（10秒間）
-        sb.append("    // Step 7: A長押しで連続調合（10秒間）\n");
+        // Step 7: A長押しで連続調合（7秒間）
+        sb.append("    // Step 7: A長押しで連続調合（7秒間）\n");
         sb.append("    // 重要: A長押しで連続調合する（A連打ではゲーム側で連続発動しないため）\n");
-        sb.append("    // 30秒間で実機の調合速度に応じて15〜25回程度調合される想定\n");
-        sb.append("    holdButton(Button::A, 10000);\n");
+        sb.append("    // 7秒間で実機の調合速度に応じて10〜20回程度調合される想定\n");
+        sb.append("    holdButton(Button::A, 7000);\n");
         sb.append("    pushButton(Button::B, 250, 3);   // 調合メニューを閉じる\n\n");
 
         // Step 8: 30秒録画
@@ -3265,6 +4504,15 @@ public class MHXXCharmApp extends JFrame {
      * @param waitMs 調合開始フレームから目標フレームまでの待機時間(ms)
      */
     static String generateComboCode2(long waitMs) {
+        return generateComboCode2(waitMs, -1);
+    }
+
+    /**
+     * 調合スナイプ用コード2を生成（オフセット情報付き）。
+     * @param waitMs 投入確認ダイアログ表示後の追加待機時間 (ms)
+     * @param offsetFrames キャリブレーションで実測した実行開始→乱数決定までのフレーム数（-1の場合はコメント省略）
+     */
+    static String generateComboCode2(long waitMs, long offsetFrames) {
         StringBuilder sb = new StringBuilder();
         sb.append("// ================================================================\n");
         sb.append("// MHXX 調合スナイプ - コード2 (ゲーム復帰 + 待機 + マカ錬金)\n");
@@ -3272,7 +4520,14 @@ public class MHXXCharmApp extends JFrame {
         sb.append("// 実行前提:\n");
         sb.append("//   - コード1実行後、HOMEでゲーム中断した状態\n");
         sb.append("//   - 録画から累積弾数を読み取り、ツールで現在フレームを特定済み\n");
-        sb.append("//   - wait_ms に「(目標F - 現在F) / 30 * 1000」を設定\n");
+        if (offsetFrames > 0) {
+            long offsetMs = Math.round(offsetFrames / 30.0 * 1000);
+            sb.append("//   - wait_ms はダイアログ表示後の追加待機時間 (ms)\n");
+            sb.append("//     計算式: wait_ms = (目標F - 現在F - オフセットF) / 30 * 1000\n");
+            sb.append("//     オフセット適用済み: %d フレーム (約 %d ms)\n".formatted(offsetFrames, offsetMs));
+        } else {
+            sb.append("//   - wait_ms に「(目標F - 現在F) / 30 * 1000」を設定\n");
+        }
         sb.append("//\n");
         sb.append("// 動作:\n");
         sb.append("//   1. HOMEボタンでゲーム復帰（自宅にいる状態）\n");
@@ -3633,7 +4888,7 @@ public class MHXXCharmApp extends JFrame {
     /** 検索結果からArduinoタブへ連動: フレーム設定→自動計算→タブ切り替え */
     void generateArduinoForFrame(long frame) {
         arduinoTarget.setText(String.valueOf(frame));
-        tabs.setSelectedIndex(5); // Arduinoタブ（錬金シミュ削除後）
+        selectTab("Arduino");
         // 計算ボタンをプログラム的にクリック
         SwingUtilities.invokeLater(() -> arduinoCalcBtn.doClick());
     }
@@ -3665,7 +4920,7 @@ public class MHXXCharmApp extends JFrame {
                 int modelRow = table.convertRowIndexToModel(row);
                 Object val = model.getValueAt(modelRow, frameColumnIndex);
                 aroundFrame.setText(val.toString());
-                tabs.setSelectedIndex(1);
+                selectTab("周辺表示");
                 showAround();
             }
         });
@@ -3715,13 +4970,15 @@ public class MHXXCharmApp extends JFrame {
                         searchKind.setSelectedItem("風化したお守り");
                         onKindChange();
                         aroundFrame.setText(val.toString());
-                        tabs.setSelectedIndex(1);
+                        selectTab("周辺表示");
                         showAround();
                     }
                 }
             }
         });
         addArduinoContextMenu(famousTable, famousModel, 0);
+        // 共通メニュー
+        addCommonResultMenu(famousTable, famousModel, 0, 1, 2, 3, 4, 5);
         JScrollPane sp = new JScrollPane(famousTable);
         setupScrollSpeed(sp);
         sp.getViewport().setBackground(BG2);
@@ -3907,6 +5164,7 @@ public class MHXXCharmApp extends JFrame {
         JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 8));
         btnRow.setOpaque(false);
         JButton genBtn = makeButton("▶ スケッチを生成", ACCENT);
+        questLoopCalcBtn = genBtn;  // Ctrl+Enter ショートカット用
         btnRow.add(genBtn);
         JButton copyBtn = makeButton("📋 クリップボードにコピー", BTN_BG);
         btnRow.add(copyBtn);
@@ -4220,6 +5478,7 @@ public class MHXXCharmApp extends JFrame {
         row2.add(label("F  目標F:"));
         row2.add(comboTargetFField);
         JButton searchBtn = makeButton("▶ 逆算開始", ACCENT);
+        comboSnipeBtn = searchBtn;  // Ctrl+Enter ショートカット用に保存
         row2.add(searchBtn);
         JButton cancelBtn = makeButton("■ 中止", BTN_BG);
         row2.add(cancelBtn);
@@ -4323,7 +5582,7 @@ public class MHXXCharmApp extends JFrame {
         tab.add(settings, BorderLayout.NORTH);
 
         // 結果テーブル
-        DefaultTableModel comboModel = new DefaultTableModel(
+        comboModel = new DefaultTableModel(
                 new String[]{"フレーム","消費後フレーム","待ち時間","→周辺のお守り（マカ錬金用）"}, 0);
         JTable comboTable = makeTable(comboModel);
         comboTable.setToolTipText(
@@ -4338,13 +5597,15 @@ public class MHXXCharmApp extends JFrame {
                         Object val = comboModel.getValueAt(modelRow, 0);
                         aroundFrame.setText(val.toString());
                         aroundOrigin.setSelectedIndex(0); // マカ錬金
-                        tabs.setSelectedIndex(1);
+                        selectTab("周辺表示");
                         showAround();
                     }
                 }
             }
         });
         addArduinoContextMenu(comboTable, comboModel, 0);
+        // 共通メニュー
+        addCommonResultMenu(comboTable, comboModel, 0, -1, -1, -1, -1, -1);
 
         JScrollPane sp = new JScrollPane(comboTable);
         setupScrollSpeed(sp);
@@ -4361,9 +5622,11 @@ public class MHXXCharmApp extends JFrame {
 
             // 個数列のパース（カンマ・スペース・日本語句読点も許容）
             // 累積列（0始まり、単調増加）と個数列（各要素2〜4）を自動判定
+            // 本家準拠の新仕様では、reverseSearchCombo に累積列をそのまま渡す
             String input = comboCountsField.getText().trim();
             String[] parts = input.split("[,，\\s、]+");
-            int[] counts;
+            int[] cumulative; // 累積列（reverseSearchComboへ渡す形式）
+            int numRolls;     // 調合回数（参考表示用）
             try {
                 int[] raw = new int[parts.length];
                 for (int i = 0; i < parts.length; i++) {
@@ -4379,25 +5642,39 @@ public class MHXXCharmApp extends JFrame {
                 }
 
                 if (isCumulative) {
-                    // 累積列 → 差分に変換
-                    counts = new int[raw.length - 1];
-                    for (int i = 0; i < counts.length; i++) {
-                        counts[i] = raw[i+1] - raw[i];
-                        if (counts[i] < 2 || counts[i] > 4) {
+                    // 累積列をそのまま渡す
+                    cumulative = raw;
+                    numRolls = raw.length - 1;
+                    // バリデーション（差分が2〜4）
+                    for (int i = 1; i < raw.length; i++) {
+                        int d = raw[i] - raw[i-1];
+                        if (d < 2 || d > 4) {
                             throw new NumberFormatException(
-                                "累積列の差分が範囲外: " + raw[i] + "→" + raw[i+1] + " (差=" + counts[i] + ")");
+                                "累積列の差分が範囲外: " + raw[i-1] + "→" + raw[i] + " (差=" + d + ")");
                         }
                     }
-                    summaryLabel.setText("累積列として解釈（" + counts.length + "回分）");
+                    summaryLabel.setText("累積列として解釈（" + numRolls + "回分）");
                     summaryLabel.setForeground(FG);
                 } else {
-                    // 個数列として解釈
-                    counts = raw;
-                    for (int c : counts) {
+                    // 個数列 → 累積列に変換
+                    for (int c : raw) {
                         if (c < 2 || c > 4) {
                             throw new NumberFormatException("個数は2, 3, 4のみ有効: " + c);
                         }
                     }
+                    cumulative = new int[raw.length + 1];
+                    cumulative[0] = 0;
+                    for (int i = 0; i < raw.length; i++) cumulative[i+1] = cumulative[i] + raw[i];
+                    numRolls = raw.length;
+                    summaryLabel.setText("個数列として解釈（" + numRolls + "回分）→累積列に変換");
+                    summaryLabel.setForeground(FG);
+                }
+
+                // 本家仕様では先頭3つカット・末尾99カットするため、最低でも5要素必要
+                if (cumulative.length < 5) {
+                    throw new NumberFormatException(
+                        "本家アルゴリズムでは累積列に最低5要素（=4回分の調合）が必要です。"
+                        + "推奨は60個前後まで調合した記録（合計15〜30回分）。");
                 }
             } catch (NumberFormatException ex) {
                 JOptionPane.showMessageDialog(tab,
@@ -4418,7 +5695,7 @@ public class MHXXCharmApp extends JFrame {
                 return;
             }
 
-            final int[] fCounts = counts;
+            final int[] fCumulative = cumulative;
             final long fMaxF = maxF;
 
             CharmData cd = new CharmData();
@@ -4431,13 +5708,11 @@ public class MHXXCharmApp extends JFrame {
 
             Thread.ofVirtual().start(() -> {
                 long t0 = System.currentTimeMillis();
-                List<Long> results = reverseSearchCombo(fCounts, fMaxF, cancelFlag);
+                // 本家準拠: 返り値は「調合終了直後F」（=ツールの「現在F (消費後)」）
+                List<Long> results = reverseSearchCombo(fCumulative, fMaxF, cancelFlag);
 
                 SwingUtilities.invokeLater(() -> {
-                    int consumedPerRoll = 5;
-                    int totalConsumed = fCounts.length * consumedPerRoll;
-                    for (Long f : results) {
-                        long afterFrame = f + totalConsumed;
+                    for (Long afterFrame : results) {
                         // 消費後のフレームでマカ錬金のお守りを計算
                         RNG charmRng = new RNG();
                         charmRng.jump(afterFrame);
@@ -4447,8 +5722,10 @@ public class MHXXCharmApp extends JFrame {
                             + (charm.s2Name() != null ? " " + charm.s2Name() + charm.sp2() : "")
                             + " s" + charm.slot();
 
+                        // 本家アルゴリズムは「調合終了直後F」のみを返すため、
+                        // 「調合開始F」は厳密には算出できない。afterFrame をそのまま「現在F」として扱う。
                         comboModel.addRow(new Object[]{
-                            f, afterFrame, framesToTime(f), charmStr
+                            afterFrame, afterFrame, framesToTime(afterFrame), charmStr
                         });
                     }
 
@@ -4593,7 +5870,7 @@ public class MHXXCharmApp extends JFrame {
         comboNcField.setToolTipText("<html>Continue連打回数。目標Fが大きいほど多くする。<br>目安: 目標F ÷ 714</html>");
         c1Row.add(comboNcField);
         c1Row.add(label("  調合回数（目安）:"));
-        comboNumField = makeField("20", 5);
+        comboNumField = makeField("15", 5);
         comboNumField.setToolTipText(
             "<html>10秒のA長押しで実機が何回くらい調合するかの<b>目安</b>。<br>" +
             "（生成コードのA長押し時間は10秒固定。このフィールドはメモ用）</html>");
@@ -4670,8 +5947,63 @@ public class MHXXCharmApp extends JFrame {
         comboWaitLabel.setForeground(ACCENT);
         c2Row.add(comboWaitLabel);
         JButton gen2Btn = makeButton("▶ コード2を生成", ACCENT);
+        comboGen2Btn = gen2Btn;  // Ctrl+Enter ショートカット用
         c2Row.add(gen2Btn);
         settings.add(c2Row);
+
+        // --- オフセット行 ---
+        JPanel offsetRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        offsetRow.setOpaque(false);
+        offsetRow.add(label("オフセット:"));
+        comboOffsetField = makeField("885", 8);
+        comboOffsetField.setToolTipText(
+            "<html>コード2実行開始から乱数決定（投入確定）までの実測フレーム数。<br>" +
+            "ロード時間や操作時間が含まれるため、wait_ms 計算時にこの分を差し引きます。<br>" +
+            "<b>下のキャリブレーションで実測してください。</b></html>");
+        offsetRow.add(comboOffsetField);
+        offsetRow.add(label("F"));
+        JLabel offsetMsLabel = new JLabel("(--- ms)");
+        offsetMsLabel.setForeground(new Color(0x88, 0x88, 0xaa));
+        offsetRow.add(offsetMsLabel);
+        settings.add(offsetRow);
+
+        // --- キャリブレーション領域 ---
+        JPanel calPanel = titled("オフセットのキャリブレーション");
+        calPanel.setLayout(new BoxLayout(calPanel, BoxLayout.Y_AXIS));
+
+        JPanel calDesc = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        calDesc.setOpaque(false);
+        calDesc.add(new JLabel(
+            "<html><body style='width:800px; color:#8888aa;'>" +
+            "<b>手順:</b><br>" +
+            "① 通常どおり「コード1」を実行（Continue 0回でもOK）→ 録画から累積弾数を読んで上の「現在F (消費後)」に入力<br>" +
+            "② 下の「測定用コード生成」で <code>wait_ms = 0</code> のコード2を生成→Arduinoに書き込み→実行<br>" +
+            "③ 鑑定で出たお守りを「お守り検索」または「周辺表示」で照合し、フレーム値を特定<br>" +
+            "④ そのフレーム値を入力 →「現在Fから逆算してオフセット設定」でオフセットに反映<br>" +
+            "<span style='color:#aaaaaa;'>※ 計算式: <b>オフセット = 実測フレーム − 現在F</b><br>" +
+            "※ Switch再起動直後に実行した場合は「現在F = 0」のまま使えます</span>" +
+            "</body></html>"));
+        calPanel.add(calDesc);
+
+        JPanel calRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        calRow.setOpaque(false);
+        JButton calGenBtn = makeButton("▶ 測定用コード生成 (wait_ms=0)", GREEN);
+        calGenBtn.setToolTipText("オフセット測定用に wait_ms=0 のコード2を生成します");
+        calRow.add(calGenBtn);
+        calRow.add(label("   実測フレーム:"));
+        JTextField calMeasuredField = makeField("", 10);
+        calMeasuredField.setToolTipText("鑑定で判明したお守りのフレーム値（投入確定時の乱数フレーム）");
+        calRow.add(calMeasuredField);
+        JButton calApplyBtn = makeButton("現在Fから逆算してオフセット設定", ACCENT);
+        calApplyBtn.setToolTipText("オフセット = 実測フレーム − 現在F (消費後) で逆算します");
+        calRow.add(calApplyBtn);
+        JLabel calResultLabel = new JLabel("");
+        calResultLabel.setFont(FONT_LARGE);
+        calResultLabel.setForeground(SUCCESS);
+        calRow.add(calResultLabel);
+        calPanel.add(calRow);
+
+        settings.add(calPanel);
 
         top.add(settings);
         tab.add(top, BorderLayout.NORTH);
@@ -4721,9 +6053,14 @@ public class MHXXCharmApp extends JFrame {
             try {
                 long curF = Long.parseLong(comboCurrentFField.getText().trim());
                 long tgtF = Long.parseLong(comboTargetFField.getText().trim());
-                long diffF = tgtF - curF;
+                long offsetF = 0;
+                try {
+                    String offsetText = comboOffsetField.getText().trim();
+                    if (!offsetText.isEmpty()) offsetF = Long.parseLong(offsetText);
+                } catch (NumberFormatException ignored) {}
+                long diffF = tgtF - curF - offsetF;
                 if (diffF <= 0) {
-                    comboWaitLabel.setText("目標Fが現在F以下");
+                    comboWaitLabel.setText("目標Fが現在F+オフセット以下");
                     comboWaitLabel.setForeground(WARN);
                 } else {
                     long waitMs = Math.round(diffF / 30.0 * 1000);
@@ -4746,25 +6083,93 @@ public class MHXXCharmApp extends JFrame {
             public void changedUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
         });
 
+        // オフセット変更時の処理（ms表示更新 + wait_ms再計算）
+        Runnable updateOffsetMs = () -> {
+            try {
+                long offsetF = Long.parseLong(comboOffsetField.getText().trim());
+                long offsetMs = Math.round(offsetF / 30.0 * 1000);
+                offsetMsLabel.setText(String.format("(約 %,d ms)", offsetMs));
+            } catch (NumberFormatException ex) {
+                offsetMsLabel.setText("(--- ms)");
+            }
+        };
+        comboOffsetField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateOffsetMs.run(); updateWait.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateOffsetMs.run(); updateWait.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateOffsetMs.run(); updateWait.run(); }
+        });
+        updateOffsetMs.run(); // 初期表示
+
         // コード2生成
         gen2Btn.addActionListener(e -> {
             try {
                 long curF = Long.parseLong(comboCurrentFField.getText().trim());
                 long tgtF = Long.parseLong(comboTargetFField.getText().trim());
-                long diffF = tgtF - curF;
+                long offsetF = 0;
+                String offsetText = comboOffsetField.getText().trim();
+                if (!offsetText.isEmpty()) {
+                    try { offsetF = Long.parseLong(offsetText); } catch (NumberFormatException ignored) {}
+                }
+                long diffF = tgtF - curF - offsetF;
                 if (diffF <= 0) {
-                    JOptionPane.showMessageDialog(tab, "目標Fが現在F以下です", "エラー", JOptionPane.ERROR_MESSAGE);
+                    JOptionPane.showMessageDialog(tab,
+                        String.format("目標Fが現在F + オフセットF (%d) 以下です。\n目標Fを大きくするか、調合スナイプの設定を見直してください。", offsetF),
+                        "エラー", JOptionPane.ERROR_MESSAGE);
                     return;
                 }
                 long waitMs = Math.round(diffF / 30.0 * 1000);
-                String code = generateComboCode2(waitMs);
+                String code = generateComboCode2(waitMs, offsetF);
                 codeArea.setText(code);
                 codeArea.setCaretPosition(0);
-                statusLabel.setText(String.format("コード2を生成（待機 %,d ms = %.1f秒）", waitMs, waitMs / 1000.0));
+                statusLabel.setText(String.format("コード2を生成（オフセット %dF 適用、待機 %,d ms = %.1f秒）",
+                    offsetF, waitMs, waitMs / 1000.0));
             } catch (NumberFormatException ex) {
                 JOptionPane.showMessageDialog(tab, "現在Fと目標Fを正しく入力してください", "エラー", JOptionPane.ERROR_MESSAGE);
             }
         });
+
+        // 測定用コード生成（wait_ms = 0）
+        calGenBtn.addActionListener(e -> {
+            String code = generateComboCode2(0, -1);
+            codeArea.setText(code);
+            codeArea.setCaretPosition(0);
+            statusLabel.setText("オフセット測定用コード生成 (wait_ms=0) - Switch再起動後に実行してください");
+        });
+
+        // オフセットを設定（実測フレーム - 現在F で逆算）
+        calApplyBtn.addActionListener(e -> {
+            try {
+                long measured = Long.parseLong(calMeasuredField.getText().trim());
+                if (measured <= 0) {
+                    calResultLabel.setText("実測フレームは正の値を入力してください");
+                    calResultLabel.setForeground(WARN);
+                    return;
+                }
+                // 現在Fは空欄なら0として扱う（Switch再起動直後の想定）
+                long curF = 0;
+                String curText = comboCurrentFField.getText().trim();
+                if (!curText.isEmpty()) {
+                    try { curF = Long.parseLong(curText); } catch (NumberFormatException ignored) {}
+                }
+                long offset = measured - curF;
+                if (offset <= 0) {
+                    calResultLabel.setText(String.format("実測 %,d ≤ 現在F %,d → オフセット負値で矛盾", measured, curF));
+                    calResultLabel.setForeground(WARN);
+                    return;
+                }
+                comboOffsetField.setText(String.valueOf(offset));
+                long offsetMs = Math.round(offset / 30.0 * 1000);
+                calResultLabel.setText(String.format("オフセット = %,d − %,d = %,d F (約 %,d ms)",
+                    measured, curF, offset, offsetMs));
+                calResultLabel.setForeground(SUCCESS);
+                statusLabel.setText(String.format("キャリブレーション完了: オフセット = %,d F (実測 %,d − 現在F %,d)",
+                    offset, measured, curF));
+            } catch (NumberFormatException ex) {
+                calResultLabel.setText("実測フレームに数値を入力してください");
+                calResultLabel.setForeground(WARN);
+            }
+        });
+        calMeasuredField.addActionListener(calApplyBtn.getActionListeners()[0]);
 
         // クリップボードにコピー
         copyBtn.addActionListener(e -> {
@@ -4782,64 +6187,141 @@ public class MHXXCharmApp extends JFrame {
     }
 
     // ================================================================
-    // Combo Snipe (調合スナイプ: Lv2通常弾の個数列から現在フレーム特定)
+    // Combo Snipe (調合スナイプ: Lv2通常弾の累積個数列から現在フレーム特定)
     //
-    // 仕様 (サイファー氏 & apmnnn氏の調査より):
+    // 仕様 (apmnnn氏のmhxx-rng / search_combo を完全移植):
     //   Lv2通常弾 = ハリの実 + カラの実（各15個以上用意）
     //   調合書を持ってアイテムボックス内（ココット村自宅）で連続調合
-    //   (val & 0xFFFF) % 100 の値で個数が決まる:
+    //   (w & 0xFFFF) % 100 の値で個数が決まる:
     //     0-24  → 2個
     //     25-74 → 3個
     //     75-99 → 4個
-    //   1回の調合で乱数5消費
+    //   検索アルゴリズム: stride=5 のKMP並列検索
+    //   補正式: j = i - 5*3 - 15 + 2*(len(rawA)-1)
+    //     - 先頭3つカット (5*3)
+    //     - 初回調合の遅延 (15)
+    //     - 各調合による進行2の補正 (2*(N-1))
     // 注意:
     //   ペット/ルームサービスがアイルー/オトモアイルー同行では挙動が変わる可能性
     // ================================================================
 
-    /** 乱数値（16bit）から調合個数を決定する */
-    public static int comboCountFromValue(int val) {
-        int v = val % 100;
-        if (v < 25) return 2;
-        if (v < 75) return 3;
-        return 4;
-    }
-
     /**
-     * 指定フレームから連続調合して個数列を取得する（テスト用）。
-     * @param startFrame 調合開始フレーム
-     * @param numRolls 調合回数
-     * @return 各回の個数列（長さnumRolls）
+     * KMP前方失敗関数（本家 kmp_prefix_nj 移植）
      */
-    public static int[] simulateCombo(long startFrame, int numRolls) {
-        RNG rng = new RNG();
-        rng.jumpRaw(startFrame);
-        int[] counts = new int[numRolls];
-        for (int i = 0; i < numRolls; i++) {
-            // 各回の1回目の乱数で個数を決定、残り4回は消費（合計5消費/回）
-            rng.ascend();
-            int v = (int)((rng.w & 0xFFFF) % 100);
-            counts[i] = comboCountFromValue(v);
-            // 残り4回消費
-            for (int j = 0; j < 4; j++) rng.ascend();
+    static int[] kmpPrefix(int[] A) {
+        int n = A.length;
+        int[] pi = new int[n];
+        int j = 0;
+        for (int i = 1; i < n; i++) {
+            while (j > 0 && A[i] != A[j]) j = pi[j - 1];
+            if (A[i] == A[j]) j++;
+            pi[i] = j;
         }
-        return counts;
+        return pi;
     }
 
     /**
-     * 調合個数列から一致するフレームを逆算する。
-     * @param targetCounts 実機で得た個数列
+     * stride飛び並列KMP検索（本家 search_stride_nj 移植）。
+     * stride個の独立した状態を保持し、開始オフセット不明な調合判定を並列探索する。
+     *
+     * @param step  検索範囲（フレーム数）
+     * @param sx,sy,sz,sw,st  検索開始時のRNG状態
+     * @param A     差分配列（個数の差分）
+     * @param stride 1回の調合あたりの消費フレーム（=5）
+     * @param lut   個数判定テーブル
+     * @param cancel キャンセルフラグ
+     * @return マッチ位置のリスト
+     */
+    static List<Long> searchStride(long step,
+            long sx, long sy, long sz, long sw, long st,
+            int[] A, int stride, int[] lut,
+            java.util.concurrent.atomic.AtomicBoolean cancel) {
+        List<Long> res = new ArrayList<>();
+        int nA = A.length;
+        if (nA == 0) return res;
+        int[] pi = kmpPrefix(A);
+        int[] state = new int[stride];
+        int r = 0;
+
+        long jx = sx, jy = sy, jz = sz, jw = sw, jt = st;
+        for (long i = 0; i < step; i++) {
+            if (cancel != null && cancel.get()) break;
+            int x = lut[(int)((jw & 0xFFFFL) % 100)];
+
+            // ascend
+            jt = (jx ^ (jx << 15)) & 0xFFFFFFFFL;
+            jx = jy; jy = jz; jz = jw;
+            jw = (jw ^ (jw >>> 21) ^ jt ^ (jt >>> 4)) & 0xFFFFFFFFL;
+
+            int k = state[r];
+            while (k > 0 && A[k] != x) k = pi[k - 1];
+            if (A[k] == x) k++;
+            if (k == nA) {
+                res.add(i - (long)stride * (nA - 1));
+                k = pi[nA - 1];
+            }
+            state[r] = k;
+            r++;
+            if (r == stride) r = 0;
+        }
+        return res;
+    }
+
+    /** 個数判定テーブル（本家 combo_lookuptable 移植） */
+    static int[] comboLookupTable() {
+        int[] lut = new int[100];
+        for (int i = 0; i < 25; i++) lut[i] = 2;
+        for (int i = 25; i < 75; i++) lut[i] = 3;
+        for (int i = 75; i < 100; i++) lut[i] = 4;
+        return lut;
+    }
+
+    /**
+     * 調合の累積個数列から「調合終了直後のフレーム位置」を逆算する（本家 search_combo 移植）。
+     *
+     * 仕様（apmnnn氏のmhxx-rngより）:
+     *   - 累積列の先頭3つはカット（初期挙動が不安定なため）
+     *   - 末尾の99はカット
+     *   - 検索アルゴリズム: stride=5 のKMP並列検索
+     *   - 補正式: j = i - 5*3 - 15 + 2*(len(rawA)-1)
+     *     - 5*3 = カットした3回分
+     *     - 15  = 初回調合の遅延
+     *     - 2*(N-1) = 各調合による進行2の補正
+     *   - 返り値 = startFrame + j （調合終了直後のフレーム位置）
+     *
+     * @param cumulativeCounts 累積個数列（0始まり、例: [0, 2, 4, 7, 10, 13, ...]）
      * @param maxFrames 検索範囲
      * @param cancel キャンセルフラグ（nullable）
-     * @return 一致する候補フレームのリスト
+     * @return 一致する候補フレーム（=調合終了直後F、ツールの「現在F (消費後)」に相当）のリスト
      */
-    public static List<Long> reverseSearchCombo(int[] targetCounts, long maxFrames,
+    public static List<Long> reverseSearchCombo(int[] cumulativeCounts, long maxFrames,
             java.util.concurrent.atomic.AtomicBoolean cancel) {
         List<Long> results = new ArrayList<>();
-        if (targetCounts == null || targetCounts.length == 0) return results;
-        // バリデーション: 全て2,3,4であること
-        for (int c : targetCounts) {
-            if (c < 2 || c > 4) return results;
+        if (cumulativeCounts == null || cumulativeCounts.length < 5) return results;
+
+        // 先頭3つカット、末尾99カット
+        int[] posA;
+        int rawLen = cumulativeCounts.length;
+        int endIdx = rawLen;
+        if (cumulativeCounts[rawLen - 1] == 99) endIdx--;
+        int startIdx = 3;
+        if (endIdx - startIdx <= 1) return results;
+        posA = Arrays.copyOfRange(cumulativeCounts, startIdx, endIdx);
+
+        // 差分計算
+        int[] diffA = new int[posA.length - 1];
+        for (int i = 0; i < diffA.length; i++) {
+            diffA[i] = posA[i + 1] - posA[i];
+            if (diffA[i] < 2 || diffA[i] > 4) return results; // バリデーション
         }
+
+        int[] lut = comboLookupTable();
+
+        // 開始位置: jump(0) → descend×7 した状態
+        // jump(0)は初期seedの状態 + roll×7 と等価。descendを7回行うとroll前の状態に戻る。
+        // 本家コードでは jump(start) → descend×7 で、roll×7前の状態を作る。
+        // start=0 の場合は init() 状態と等価。
+        // ここでは、各並列ワーカーが startFrame でjumpRawしてからdescendを7回した状態を使う。
 
         int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
         if (maxFrames < (long)nThreads * 1000) nThreads = 1;
@@ -4849,40 +6331,30 @@ public class MHXXCharmApp extends JFrame {
         ExecutorService exec = Executors.newFixedThreadPool(nThreads);
         List<Future<?>> futures = new ArrayList<>();
 
+        // 補正値（呼び出し側で使用）
+        final int correction = -5 * 3 - 15 + 2 * (rawLen - 1);
+
         for (int t = 0; t < nThreads; t++) {
             final long startFrame = (long)t * chunkSize;
             final long endFrame = (t == nThreads - 1) ? maxFrames : (long)(t + 1) * chunkSize;
+            final long localStep = endFrame - startFrame;
+
             futures.add(exec.submit(() -> {
+                // jump(startFrame) してから descend を7回
                 RNG rng = new RNG();
-                rng.jumpRaw(startFrame);
+                rng.jump(startFrame);
+                for (int k = 0; k < 7; k++) rng.descend();
 
-                long localCount = endFrame - startFrame;
-                for (long i = 0; i < localCount; i++) {
-                    if (cancel != null && cancel.get()) break;
-                    long currentFrame = startFrame + i;
+                List<Long> hits = searchStride(localStep,
+                        rng.x, rng.y, rng.z, rng.w, rng.t,
+                        diffA, 5, lut, cancel);
 
-                    // 状態を退避
-                    long sx = rng.x, sy = rng.y, sz = rng.z, sw = rng.w;
-
-                    // targetCountsと一致するかチェック
-                    boolean match = true;
-                    for (int k = 0; k < targetCounts.length; k++) {
-                        rng.ascend();
-                        int v = (int)((rng.w & 0xFFFF) % 100);
-                        int count = comboCountFromValue(v);
-                        if (count != targetCounts[k]) {
-                            match = false;
-                            break;
-                        }
-                        // 残り4回消費
-                        for (int j = 0; j < 4; j++) rng.ascend();
+                for (Long i : hits) {
+                    long j = i + correction;
+                    long resultFrame = startFrame + j;
+                    if (resultFrame >= 0 && resultFrame < maxFrames) {
+                        allResults.add(resultFrame);
                     }
-
-                    if (match) allResults.add(currentFrame);
-
-                    // 状態を復元して1F進める
-                    rng.x = sx; rng.y = sy; rng.z = sz; rng.w = sw;
-                    rng.ascend();
                 }
             }));
         }

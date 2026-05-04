@@ -30,6 +30,8 @@ public class MHXXRng {
     public long x, y, z, w, t;
     public long f;
     public long[] r = new long[7];
+    /** ★高速化: r[]の個別フィールド版。roll()で同時に更新される */
+    public long r0, r1, r2, r3, r4, r5, r6;
 
     public MHXXRng() { init(); }
 
@@ -38,6 +40,7 @@ public class MHXXRng {
         z = INITIAL_SEED[2]; w = INITIAL_SEED[3];
         t = 0; f = 0;
         Arrays.fill(r, 0);
+        r0 = r1 = r2 = r3 = r4 = r5 = r6 = 0;
     }
 
     public void ascend() {
@@ -58,9 +61,38 @@ public class MHXXRng {
     }
 
     public void roll() {
-        System.arraycopy(r, 1, r, 0, 6);
-        r[6] = w;
-        ascend();
+        // ★高速化: arraycopy ではなく個別シフト
+        r0 = r1; r1 = r2; r2 = r3; r3 = r4; r4 = r5; r5 = r6;
+        r6 = w;
+        // 配列も同期維持 (外部互換性のため - getCharm 等は r0..r6 から読むようになった)
+        r[0] = r0; r[1] = r1; r[2] = r2; r[3] = r3;
+        r[4] = r4; r[5] = r5; r[6] = r6;
+        // ascend をインライン化
+        t = (x ^ (x << 15)) & MASK32;
+        x = y; y = z; z = w;
+        w = (w ^ (w >>> 21) ^ t ^ (t >>> 4)) & MASK32;
+        f++;
+    }
+
+    /**
+     * ★高速化用: r[] 配列を更新せずに個別フィールドのみ更新する高速版 roll.
+     * <p>
+     * ホットループ内で r0/r2/r3 を読んで早期判定するシナリオ専用。
+     * ヒット候補になった時に必ず {@link #syncRArray()} を呼んで配列を同期すること。
+     */
+    public void rollFast() {
+        r0 = r1; r1 = r2; r2 = r3; r3 = r4; r4 = r5; r5 = r6;
+        r6 = w;
+        t = (x ^ (x << 15)) & MASK32;
+        x = y; y = z; z = w;
+        w = (w ^ (w >>> 21) ^ t ^ (t >>> 4)) & MASK32;
+        f++;
+    }
+
+    /** rollFast() で更新した個別フィールドを r[] 配列に同期する（getCharm 用） */
+    public void syncRArray() {
+        r[0] = r0; r[1] = r1; r[2] = r2; r[3] = r3;
+        r[4] = r4; r[5] = r5; r[6] = r6;
     }
 
     // ----------------------------------------------------------------
