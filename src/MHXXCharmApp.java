@@ -1698,7 +1698,7 @@ public class MHXXCharmApp extends JFrame {
             case "有名お守り" -> exportCSV(famousModel,
                     new String[]{"フレーム","第1スキル","SP1","第2スキル","SP2","スロット","待ち時間","当たりF範囲","種類"});
             case "調合スナイプ" -> exportCSV(comboModel,
-                    new String[]{"消費後フレーム","待ち時間","一致数","→周辺のお守り（マカ錬金用）"});
+                    new String[]{"調合開始フレーム","経過時間","一致数"});
             default -> {
                 if (statusLabel != null) statusLabel.setText("このタブはCSV保存に対応していません");
             }
@@ -5260,7 +5260,7 @@ public class MHXXCharmApp extends JFrame {
         tab.setBackground(BG);
         tab.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
 
-        JPanel settings = titled("調合スナイプ（Lv2通常弾の個数列から現在フレーム特定）");
+        JPanel settings = titled("調合スナイプ（Lv2通常弾の個数列から「調合開始フレーム」を特定）");
         settings.setLayout(new BoxLayout(settings, BoxLayout.Y_AXIS));
 
         // 説明
@@ -5270,8 +5270,9 @@ public class MHXXCharmApp extends JFrame {
             "<html><body style='width:800px; color:#8888aa;'>" +
             "<b>★ココット村でセーブ必須★</b>（ロード後は村スタート → コードが自宅へ移動します）<br>" +
             "ハリの実 + カラの実 を<b>各15個以上</b>用意し、調合書を持って自宅で<br>" +
-            "<b>Lv2通常弾を連続調合</b>。Switch録画で弾数の変化を記録し、現在フレームを逆算。<br>" +
+            "<b>Lv2通常弾を連続調合</b>。Switch録画で弾数の変化を記録し、<b>「調合する」を押した瞬間の乱数位置</b>を逆算。<br>" +
             "前提: ルームサービス=モガの村の看板娘、ペット/オトモなし。<br>" +
+            "<b>使い方:</b> 結果の「調合開始F」と目標Fの差分(待機時間)だけタイマーで待ってからマカ錬金を実行。<br>" +
             "<b>入力形式:</b> 累積弾数（0始まり、例: <code>0 2 4 7 10 13 16</code>）<br>" +
             "　　 or 個数列（各回の調合数、例: <code>2,2,3,3,3,3</code>）— 自動判定します。" +
             "</body></html>");
@@ -5469,16 +5470,17 @@ public class MHXXCharmApp extends JFrame {
         settings.add(rowMode);
 
         // 検索範囲 + 目標F + ボタン
-        JTextField rangeField = makeField("1000000", 12);
+        JTextField rangeField = makeField("10000", 12);
         rangeField.setToolTipText(
             "<html>検索するフレーム数の上限。<br>" +
             "目標Fを入力した場合は自動で「目標F+マージン」に上書きされる。<br>" +
             "範囲が広すぎると偽マッチが大量発生する点に注意。</html>");
         comboTargetFField = makeField("", 12);
         comboTargetFField.setToolTipText(
-            "<html><b>狙うお守りのフレーム位置（任意）</b><br>" +
-            "入力すると検索範囲を「目標F+10万」に自動設定し、偽マッチを大幅削減。<br>" +
-            "候補ハイライト（目標F以下で最も近い候補を緑）にも使う。</html>");
+            "<html><b>狙うお守りのフレーム位置(任意)</b><br>" +
+            "入力すると<b>「調合開始Fから目標Fまでの待機時間」</b>を自動表示します。<br>" +
+            "また、検索範囲を「目標F+10万」に自動設定して偽マッチを大幅削減し、<br>" +
+            "候補ハイライト(目標F以下で最も近い候補を緑)にも使います。</html>");
         JPanel row2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         row2.setOpaque(false);
         row2.add(label("検索範囲:"));
@@ -5591,11 +5593,12 @@ public class MHXXCharmApp extends JFrame {
 
         // 結果テーブル
         comboModel = new DefaultTableModel(
-                new String[]{"消費後フレーム","待ち時間","一致数","→周辺のお守り（マカ錬金用）"}, 0);
+                new String[]{"調合開始フレーム","経過時間","一致数"}, 0);
         JTable comboTable = makeTable(comboModel);
         comboTable.setToolTipText(
             "<html>ダブルクリック→周辺表示にジャンプ / 右クリック→Arduinoコード生成<br>" +
-            "<b>「調合Arduino」タブの「現在F」には「消費後フレーム」列の値を入力</b></html>");
+            "<b>調合開始フレーム = 「調合する」を選んだ瞬間の乱数位置</b><br>" +
+            "目標フレームとの差分が、調合開始から錬金までの待機時間になります</html>");
         comboTable.addMouseListener(new MouseAdapter() {
             @Override public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2) {
@@ -5717,9 +5720,6 @@ public class MHXXCharmApp extends JFrame {
             final long fMaxF = maxF;
             final int fMinMatch = minMatch;
 
-            CharmData cd = new CharmData();
-            cd.setBlue(); // 風化したお守り
-
             statusLabel.setText("調合スナイプ逆算中...");
             progressBar.setValue(0);
             progressBar.setVisible(true);
@@ -5732,20 +5732,10 @@ public class MHXXCharmApp extends JFrame {
 
                 SwingUtilities.invokeLater(() -> {
                     for (ComboSearchResult rs : results) {
-                        long afterFrame = rs.frame();
-                        // 消費後のフレームでマカ錬金のお守りを計算
-                        RNG charmRng = new RNG();
-                        charmRng.jump(afterFrame);
-                        Charm charm = getCharm(charmRng, cd, 0); // マカ錬金
-
-                        String charmStr = charm.s1Name() + charm.sp1()
-                            + (charm.s2Name() != null ? " " + charm.s2Name() + charm.sp2() : "")
-                            + " s" + charm.slot();
-
-                        // 列構成: 消費後F / 待ち時間 / 一致数 / 周辺お守り
+                        long startFrame = rs.frame();
+                        // 列構成: 調合開始フレーム / 経過時間 / 一致数
                         comboModel.addRow(new Object[]{
-                            afterFrame, framesToTime(afterFrame),
-                            rs.matchCount(), charmStr
+                            startFrame, framesToTime(startFrame), rs.matchCount()
                         });
                     }
 
@@ -5819,18 +5809,31 @@ public class MHXXCharmApp extends JFrame {
                             fMaxF));
                         summaryLabel.setForeground(WARN);
                     } else if (results.size() == 1) {
-                        summaryLabel.setText("現在フレーム特定: " + results.get(0).frame() + "F");
+                        long startF = results.get(0).frame();
+                        if (fTargetF != null && fTargetF >= startF) {
+                            long waitFrames = fTargetF - startF;
+                            summaryLabel.setText(String.format(
+                                "<html><b>調合開始F: %,d</b> &nbsp;|&nbsp; 目標Fまでの待機: <b>%,d F</b> = <b>%s</b></html>",
+                                startF, waitFrames, framesToTime(waitFrames)));
+                        } else if (fTargetF != null) {
+                            summaryLabel.setText(String.format(
+                                "<html><b>調合開始F: %,d</b> &nbsp;|&nbsp; <span style='color:#cc6666;'>目標F (%,d) は調合開始Fより前です</span></html>",
+                                startF, fTargetF));
+                        } else {
+                            summaryLabel.setText(String.format(
+                                "<html><b>調合開始F: %,d</b> &nbsp;|&nbsp; 目標Fを入力すると待機時間を表示します</html>",
+                                startF));
+                        }
                         summaryLabel.setForeground(SUCCESS);
                     } else if (fBestCandidate != null) {
-                        // 目標F指定あり: 推奨候補を強調
-                        // ただし複数候補がある時は偽マッチ警告
+                        long waitFrames = fTargetF - fBestCandidate;
                         summaryLabel.setText(String.format(
-                            "<html>%d件の候補 — 推奨: <b>%d F</b>（目標 %d F 以下で最も近い、緑色行）<br>" +
+                            "<html>%d件の候補 — 推奨: <b>調合開始F %,d</b>(緑色行) &nbsp;|&nbsp; 目標 %,d Fまでの待機: <b>%,d F = %s</b><br>" +
                             "<span style='color:#cc8888;'>※複数候補がある時は偽マッチ含む可能性。観測数を増やすと絞り込めます</span></html>",
-                            results.size(), fBestCandidate, fTargetF));
+                            results.size(), fBestCandidate, fTargetF, waitFrames, framesToTime(waitFrames)));
                         summaryLabel.setForeground(SUCCESS);
                     } else {
-                        summaryLabel.setText("<html>" + results.size() + "件の候補（目標Fを入力すると推奨候補をハイライトします）<br>" +
+                        summaryLabel.setText("<html>" + results.size() + "件の候補(目標Fを入力すると推奨候補をハイライト+待機時間を表示します)<br>" +
                             "<span style='color:#cc8888;'>※候補が多い時は観測数を増やすことを推奨</span></html>");
                         summaryLabel.setForeground(WARN);
                     }
@@ -6356,7 +6359,6 @@ public class MHXXCharmApp extends JFrame {
         // 完全一致モードか前方部分一致モードかを判定
         boolean partialMode = (minMatchCount > 0 && minMatchCount < diffA.length);
         // 部分一致モードでは、検索パターンを「先頭 minMatchCount 要素」に絞る
-        // ただし長さが diffA.length と異なるので、補正値も調整する必要がある
         int[] searchPattern;
         int patternLen;
         if (partialMode) {
@@ -6367,16 +6369,13 @@ public class MHXXCharmApp extends JFrame {
             searchPattern = diffA;
         }
 
-        // 補正値: 完全一致なら従来通り、部分一致なら patternLen に応じて調整
-        // posA に含まれる要素数 = patternLen + 1
-        // raw 換算では先頭3つカットがあるので: 部分マッチ長 patternLen 要素を確保するための raw 長 = patternLen + 1 + 3
-        // よって correction = -5*3 - 15 + 2*((patternLen + 4) - 1)
-        //                  = -15 - 15 + 2*(patternLen + 3)
-        //                  = -30 + 2*patternLen + 6
-        //                  = 2*patternLen - 24
-        // ※ rawLen と同じ意味になる: rawLen = patternLen + 4 (差分→posA→cumulativeへの戻し)
-        int effectiveRawLen = patternLen + 4;
-        final int correction = -5 * 3 - 15 + 2 * (effectiveRawLen - 1);
+        // 補正値: 元の累積列の全体長 rawLen を用いる (検索パターン長によらず一定).
+        //   j = i - 5*3 - 15 + 2*(rawLen - 1)
+        //   - 5*3   : 先頭3つカット (1要素 = stride 5F)
+        //   - 15    : 初回調合の遅延
+        //   - 2*(rawLen-1) : 各調合 (rawLen-1回分) の進行2の補正
+        // ※「調合開始フレーム」(=「調合する」を選んだ瞬間の乱数位置) を返す
+        final int correction = -5 * 3 - 15 + 2 * (rawLen - 1);
 
         int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
         if (maxFrames < (long)nThreads * 1000) nThreads = 1;
