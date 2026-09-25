@@ -1,0 +1,4 @@
+/build*/
+/mhxx_charm_settings.properties
+*.class
+*.jar
