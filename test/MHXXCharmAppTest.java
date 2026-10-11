@@ -1,4 +1,6 @@
 import java.util.List;
+import javax.swing.JPanel;
+import javax.swing.JTabbedPane;
 
 /** 依存ライブラリなしで実行できる回帰テスト。 */
 public final class MHXXCharmAppTest {
@@ -12,7 +14,15 @@ public final class MHXXCharmAppTest {
         testComboSketchGeneration();
         testComboBackupSketchGeneration();
         testRewardConsumptionAndStartFrame();
+        testRemovedLastTabRestoresTimerSelection();
         System.out.println("OK: " + assertions + " assertions");
+    }
+
+    private static void testRemovedLastTabRestoresTimerSelection() {
+        JTabbedPane tabs = new JTabbedPane();
+        for (int i = 0; i < 10; i++) tabs.addTab("Tab " + i, new JPanel());
+        MHXXCharmApp.safeSetIndex(tabs, "10");
+        equal(9, tabs.getSelectedIndex(), "old timer tab index restores the new last tab");
     }
 
     private static void testJumpMatchesSequentialRng() {

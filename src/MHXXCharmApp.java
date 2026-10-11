@@ -942,7 +942,6 @@ public class MHXXCharmApp extends JFrame {
 
     // 主要アクションボタン (Ctrl+Enter ショートカット用)
     JButton comboSnipeBtn;     // 調合スナイプ - 逆算開始
-    JButton questLoopCalcBtn;  // クエスト周回 - 主要アクション (スケッチ生成等)
     JButton comboGen2Btn;      // 調合Arduino - コード2を生成
     JButton rewardSearchBtn;   // 報酬逆算 - 検索開始
 
@@ -1049,7 +1048,7 @@ public class MHXXCharmApp extends JFrame {
         // Tabs - 論理的にグループ化した順番:
         //   [検索系] お守り検索 / 複数条件検索 / 周辺表示 / 有名お守り
         //   [調合スナイプ系] 調合スナイプ / 調合Arduino / Arduino / キャリブレーション
-        //   [その他スナイプ] 報酬逆算 / クエスト周回
+        //   [その他スナイプ] 報酬逆算
         //   [実行系] タイマー
         tabs = new JTabbedPane();
         tabs.setBackground(BG);
@@ -1064,7 +1063,6 @@ public class MHXXCharmApp extends JFrame {
         tabs.addTab(" Arduino", buildArduinoTab());
         tabs.addTab(" キャリブレーション", buildCalibrationTab());
         tabs.addTab(" 報酬逆算", buildRewardReverseTab());
-        tabs.addTab(" クエスト周回", buildQuestLoopTab());
         // タイマータブはJScrollPaneでラップ（縦長コンテンツに対応）
         JPanel timerInner = buildTimerTab();
         JScrollPane timerScroll = new JScrollPane(timerInner,
@@ -1271,8 +1269,12 @@ public class MHXXCharmApp extends JFrame {
         catch (Exception ignored) {}
     }
 
-    void safeSetIndex(JTabbedPane tp, String val) {
-        try { int idx = Integer.parseInt(val); if (idx >= 0 && idx < tp.getTabCount()) tp.setSelectedIndex(idx); }
+    static void safeSetIndex(JTabbedPane tp, String val) {
+        try {
+            int idx = Integer.parseInt(val);
+            if (idx >= 0 && idx < tp.getTabCount()) tp.setSelectedIndex(idx);
+            else if (idx == tp.getTabCount() && idx > 0) tp.setSelectedIndex(idx - 1);
+        }
         catch (Exception ignored) {}
     }
 
@@ -1734,7 +1736,6 @@ public class MHXXCharmApp extends JFrame {
             case "周辺表示"       -> showAround();
             case "調合スナイプ"   -> { if (comboSnipeBtn != null) comboSnipeBtn.doClick(); }
             case "報酬逆算"       -> startRewardSearch();
-            case "クエスト周回"   -> { if (questLoopCalcBtn != null) questLoopCalcBtn.doClick(); }
             case "タイマー"       -> { if (timerActionBtn != null) timerActionBtn.doClick(); }
             case "キャリブレーション" -> { /* キャリブレーションは複数ボタンあり、特定不可 */ }
             case "Arduino"         -> { /* Arduinoタブはコード生成ボタンが複数 */ }
@@ -5252,201 +5253,6 @@ public class MHXXCharmApp extends JFrame {
     }
 
     // ================================================================
-    // Quest Loop Tab (Phase 1-B: クエスト自動周回スケッチ生成)
-    // ================================================================
-    JPanel buildQuestLoopTab() {
-        JPanel tab = new JPanel(new BorderLayout(8,8));
-        tab.setBackground(BG);
-        tab.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
-
-        // 上部：パラメータ入力
-        JPanel top = new JPanel();
-        top.setBackground(BG);
-        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
-
-        JPanel inputPanel = titled("クエスト自動周回スケッチ生成 (G★2 火山の採集ツアー)");
-        inputPanel.setLayout(new BoxLayout(inputPanel, BoxLayout.Y_AXIS));
-
-        // 説明
-        JPanel descRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
-        descRow.setOpaque(false);
-        JLabel desc = new JLabel(
-            "<html><body style='width:800px; color:#8888aa;'>" +
-            "G★2「火山の採集ツアー」を自動周回するArduinoスケッチを生成します。<br>" +
-            "<b>想定フロー:</b> 結果画面→受注→BC→エリア4採掘→モドリ玉→納品→報酬→結果画面(ループ)<br>" +
-            "<b>前提:</b> モドリ玉・ピッケル複数本・クーラードリンクを持参／オトモなし推奨／" +
-            "1周目はユーザが手動クリア。<br>" +
-            "<b>注意:</b> デフォルト値は机上推定。実機で少しずつ調整すること。" +
-            "</body></html>");
-        desc.setFont(FONT_SMALL);
-        descRow.add(desc);
-        inputPanel.add(descRow);
-
-        // パラメータ入力フィールドたち
-        QuestSketchParams defaults = new QuestSketchParams();
-
-        JTextField fResultA = makeField(String.valueOf(defaults.resultScreenAPressCount), 6);
-        JTextField fAInterval = makeField(String.valueOf(defaults.aPressIntervalMs), 6);
-        JTextField fBCWait = makeField(String.valueOf(defaults.bcStartWaitMs), 6);
-        JTextField fBC2A4 = makeField(String.valueOf(defaults.bcToArea4TravelMs), 6);
-        JTextField fAreaLoad = makeField(String.valueOf(defaults.areaLoadWaitMs), 6);
-        JTextField fA4Inner = makeField(String.valueOf(defaults.area4InnerMoveMs), 6);
-        JTextField fDigCount = makeField(String.valueOf(defaults.diggingAPressCount), 6);
-        JTextField fDigInterval = makeField(String.valueOf(defaults.diggingAPressIntervalMs), 6);
-        JTextField fModoriDown = makeField(String.valueOf(defaults.modoriDaArrowDownCount), 6);
-        JTextField fModoriWait = makeField(String.valueOf(defaults.modoriDaUseWaitMs), 6);
-        JTextField fDeliveryMove = makeField(String.valueOf(defaults.deliveryBoxTravelMs), 6);
-        JTextField fDeliveryA = makeField(String.valueOf(defaults.deliveryAPressCount), 6);
-        JTextField fRewardA = makeField(String.valueOf(defaults.rewardScreenAPressCount), 6);
-
-        // Row 1: 結果画面関連
-        JPanel r1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
-        r1.setOpaque(false);
-        r1.add(label("【結果画面】Aボタン連打回数:"));
-        r1.add(fResultA);
-        r1.add(label("  A連打間隔(ms):"));
-        r1.add(fAInterval);
-        inputPanel.add(r1);
-
-        // Row 2: BC起動・移動
-        JPanel r2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
-        r2.setOpaque(false);
-        r2.add(label("【BC】起動待機(ms):"));
-        r2.add(fBCWait);
-        r2.add(label("  BC→エリア4走行(ms):"));
-        r2.add(fBC2A4);
-        r2.add(label("  エリア切替ロード(ms):"));
-        r2.add(fAreaLoad);
-        inputPanel.add(r2);
-
-        // Row 3: 採掘関連
-        JPanel r3 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
-        r3.setOpaque(false);
-        r3.add(label("【採掘】エリア4内移動(ms):"));
-        r3.add(fA4Inner);
-        r3.add(label("  A連打回数:"));
-        r3.add(fDigCount);
-        r3.add(label("  A連打間隔(ms):"));
-        r3.add(fDigInterval);
-        inputPanel.add(r3);
-
-        // Row 4: モドリ玉
-        JPanel r4 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
-        r4.setOpaque(false);
-        r4.add(label("【モドリ玉】↓キー回数(実機調整):"));
-        r4.add(fModoriDown);
-        r4.add(label("  使用後BC帰還待機(ms):"));
-        r4.add(fModoriWait);
-        inputPanel.add(r4);
-
-        // Row 5: 納品・ループ
-        JPanel r5 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
-        r5.setOpaque(false);
-        r5.add(label("【納品】納品ボックス移動(ms):"));
-        r5.add(fDeliveryMove);
-        r5.add(label("  A連打回数:"));
-        r5.add(fDeliveryA);
-        r5.add(label("  【報酬画面】A連打:"));
-        r5.add(fRewardA);
-        inputPanel.add(r5);
-
-        // 生成ボタン
-        JPanel btnRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 8));
-        btnRow.setOpaque(false);
-        JButton genBtn = makeButton("▶ スケッチを生成", ACCENT);
-        questLoopCalcBtn = genBtn;  // Ctrl+Enter ショートカット用
-        btnRow.add(genBtn);
-        JButton copyBtn = makeButton("📋 クリップボードにコピー", BTN_BG);
-        btnRow.add(copyBtn);
-        JButton resetBtn = makeButton("↻ デフォルトに戻す", BTN_BG);
-        btnRow.add(resetBtn);
-        inputPanel.add(btnRow);
-
-        top.add(inputPanel);
-        tab.add(top, BorderLayout.NORTH);
-
-        // 出力エリア
-        JTextArea outputArea = new JTextArea();
-        outputArea.setFont(FONT_MONO_SMALL);
-        outputArea.setBackground(BG2);
-        outputArea.setForeground(FG);
-        outputArea.setCaretColor(FG);
-        outputArea.setEditable(true);
-        outputArea.setTabSize(2);
-        outputArea.setText("▶ スケッチを生成 ボタンを押すとここにコードが表示されます。");
-        JScrollPane outScroll = new JScrollPane(outputArea);
-        setupScrollSpeed(outScroll);
-        JPanel outPanel = titled("生成されたArduinoスケッチ (Arduino IDEにコピペして使用)");
-        outPanel.setLayout(new BorderLayout());
-        outPanel.add(outScroll, BorderLayout.CENTER);
-        tab.add(outPanel, BorderLayout.CENTER);
-
-        // 生成ボタンのアクション
-        genBtn.addActionListener(e -> {
-            try {
-                QuestSketchParams p = new QuestSketchParams();
-                p.resultScreenAPressCount = Integer.parseInt(fResultA.getText().trim());
-                p.aPressIntervalMs = Integer.parseInt(fAInterval.getText().trim());
-                p.bcStartWaitMs = Integer.parseInt(fBCWait.getText().trim());
-                p.bcToArea4TravelMs = Integer.parseInt(fBC2A4.getText().trim());
-                p.areaLoadWaitMs = Integer.parseInt(fAreaLoad.getText().trim());
-                p.area4InnerMoveMs = Integer.parseInt(fA4Inner.getText().trim());
-                p.diggingAPressCount = Integer.parseInt(fDigCount.getText().trim());
-                p.diggingAPressIntervalMs = Integer.parseInt(fDigInterval.getText().trim());
-                p.modoriDaArrowDownCount = Integer.parseInt(fModoriDown.getText().trim());
-                p.modoriDaUseWaitMs = Integer.parseInt(fModoriWait.getText().trim());
-                p.deliveryBoxTravelMs = Integer.parseInt(fDeliveryMove.getText().trim());
-                p.deliveryAPressCount = Integer.parseInt(fDeliveryA.getText().trim());
-                p.rewardScreenAPressCount = Integer.parseInt(fRewardA.getText().trim());
-
-                String sketch = generateQuestSketch(p);
-                outputArea.setText(sketch);
-                outputArea.setCaretPosition(0);
-                statusLabel.setText("スケッチ生成完了");
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(tab,
-                    "数値を正しく入力してください: " + ex.getMessage(),
-                    "入力エラー", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-
-        // コピーボタン
-        copyBtn.addActionListener(e -> {
-            String text = outputArea.getText();
-            if (text.isEmpty() || text.startsWith("▶")) {
-                JOptionPane.showMessageDialog(tab,
-                    "先に「スケッチを生成」を押してください",
-                    "情報", JOptionPane.INFORMATION_MESSAGE);
-                return;
-            }
-            java.awt.datatransfer.StringSelection sel = new java.awt.datatransfer.StringSelection(text);
-            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(sel, null);
-            statusLabel.setText("クリップボードにコピーしました");
-        });
-
-        // リセットボタン
-        resetBtn.addActionListener(e -> {
-            QuestSketchParams d = new QuestSketchParams();
-            fResultA.setText(String.valueOf(d.resultScreenAPressCount));
-            fAInterval.setText(String.valueOf(d.aPressIntervalMs));
-            fBCWait.setText(String.valueOf(d.bcStartWaitMs));
-            fBC2A4.setText(String.valueOf(d.bcToArea4TravelMs));
-            fAreaLoad.setText(String.valueOf(d.areaLoadWaitMs));
-            fA4Inner.setText(String.valueOf(d.area4InnerMoveMs));
-            fDigCount.setText(String.valueOf(d.diggingAPressCount));
-            fDigInterval.setText(String.valueOf(d.diggingAPressIntervalMs));
-            fModoriDown.setText(String.valueOf(d.modoriDaArrowDownCount));
-            fModoriWait.setText(String.valueOf(d.modoriDaUseWaitMs));
-            fDeliveryMove.setText(String.valueOf(d.deliveryBoxTravelMs));
-            fDeliveryA.setText(String.valueOf(d.deliveryAPressCount));
-            fRewardA.setText(String.valueOf(d.rewardScreenAPressCount));
-            statusLabel.setText("デフォルト値に戻しました");
-        });
-
-        return tab;
-    }
-
-    // ================================================================
     // Combo Snipe Tab UI
     // ================================================================
     JPanel buildComboSnipeTab() {
@@ -6787,167 +6593,5 @@ public class MHXXCharmApp extends JFrame {
             for (int s = 0; s < 5; s++) rng.ascend();
         }
         return match;
-    }
-
-    // ================================================================
-    // Quest Auto-Loop Sketch Generator (Phase 1-B)
-    //
-    // G★2「火山の採集ツアー」を自動周回するArduinoスケッチを生成する。
-    //
-    // 想定フロー:
-    //   [状態0] クエスト結果画面（ユーザが初回はここまで手動で到達）
-    //     ↓ A連打（報酬受取〜次クエスト受注〜出発）
-    //   [状態1] BC着 → 前方ダッシュでエリア4へ
-    //   [状態2] エリア4ロード待機 → 採掘ポイントへ前進
-    //   [状態3] 採掘A連打 → モドリ玉使用（メニュー→アイテム→モドリ玉→A）
-    //   [状態4] BC帰還 → 納品ボックスへ前進 → A連打で納品
-    //   [状態5] クエストクリア → 報酬画面 → 結果画面 → 状態0へループ
-    //
-    // 注意:
-    //   デフォルト値は机上推定。実機で試しながら調整する前提のパラメータ。
-    // ================================================================
-
-    /** クエスト周回スケッチのパラメータ */
-    public static class QuestSketchParams {
-        // 結果画面〜クエスト開始
-        public int resultScreenAPressCount = 15;   // 報酬受取〜出発までのA連打回数
-        public int aPressIntervalMs = 500;          // A連打の間隔
-
-        // クエスト開始後のBC待機
-        public int bcStartWaitMs = 3000;            // BCロード完了待ち
-
-        // BC→エリア4移動
-        public int bcToArea4TravelMs = 5000;        // ダッシュ時間
-
-        // エリア4ロード
-        public int areaLoadWaitMs = 5000;           // エリア切替ロード待機
-
-        // エリア4内移動（採掘ポイント前）
-        public int area4InnerMoveMs = 2000;         // エリア境界から採掘ポイントまで
-
-        // 採掘
-        public int diggingAPressCount = 10;         // ピッケル1本で最大採掘回数
-        public int diggingAPressIntervalMs = 300;   // 採掘アクション間隔
-
-        // モドリ玉使用
-        public int modoriDaArrowDownCount = 0;      // メニューでアイテム欄に移動するまでの↓回数（実機調整）
-        public int modoriDaUseWaitMs = 5000;        // モドリ玉使用後BC帰還までの待機
-
-        // BC内納品ボックス移動
-        public int deliveryBoxTravelMs = 2000;      // BC帰還後、納品ボックスへ移動
-        public int deliveryAPressCount = 8;         // 納品A連打回数
-
-        // 報酬画面〜結果画面
-        public int rewardScreenAPressCount = 20;    // 報酬画面でのA連打回数（結果画面まで戻る）
-
-        public QuestSketchParams() {}
-    }
-
-    /**
-     * クエスト自動周回Arduinoスケッチを生成する。
-     * @param p パラメータ
-     * @return 生成されたC++スケッチコード
-     */
-    public static String generateQuestSketch(QuestSketchParams p) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("// ================================================================\n");
-        sb.append("// MHXX クエスト自動周回スケッチ (G★2 火山の採集ツアー)\n");
-        sb.append("// ================================================================\n");
-        sb.append("// 実行前提:\n");
-        sb.append("//   1. 集会所受付でG★2「火山の採集ツアー」を1回クリアしておく\n");
-        sb.append("//   2. クエスト結果画面でこのスケッチを搭載したArduinoを接続\n");
-        sb.append("//   3. アイテムポーチに「モドリ玉」が入っていること\n");
-        sb.append("//   4. ピッケル（鉄/グレート）を複数本所持していること\n");
-        sb.append("//   5. クーラードリンクの所持を推奨（火山は灼熱エリアあり）\n");
-        sb.append("//   6. オトモはなし（お守り入手率を上げるため）\n");
-        sb.append("//\n");
-        sb.append("// 落とし穴対策:\n");
-        sb.append("//   - setup()で十分にB連打してSwitch認識を待つ（10回）\n");
-        sb.append("//   - 各フェーズ開始時にB連打してメニュー/ダイアログをクリア\n");
-        sb.append("//   - エリア境界でのA押下は複数回（空振り対策）\n");
-        sb.append("//   - 採掘後にB連打（「ピッケルが壊れた」等のメッセージクリア）\n");
-        sb.append("//   - 報酬画面の終盤はB連打（「鑑定する」誤爆を防止）\n");
-        sb.append("//\n");
-        sb.append("// 注意:\n");
-        sb.append("//   デフォルトのタイミング値は机上推定値。実機で試しながら調整すること。\n");
-        sb.append("//   特に移動時間・採掘位置・モドリ玉操作は機体個体差があるため要調整。\n");
-        sb.append("// ================================================================\n");
-        sb.append("#include <NintendoSwitchControlLibrary.h>\n");
-        sb.append("\n");
-        sb.append("void setup() {\n");
-        sb.append("  // 誤動作防止：Switchがマイコンを認識するまで十分にB連打（10回）\n");
-        sb.append("  pushButton(Button::B, 500, 10);\n");
-        sb.append("}\n");
-        sb.append("\n");
-        sb.append("void loop() {\n");
-        sb.append("  // ---- フェーズ0: メニュー/ダイアログをBでクリア（フェーズ間ガード） ----\n");
-        sb.append("  pushButton(Button::B, 200, 3);\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ1: クエスト結果画面 → 次クエスト受注 → 出発 ----\n");
-        sb.append("  // 報酬受取〜受注画面〜出発までをAボタン連打で進行\n");
-        sb.append("  pushButton(Button::A, ").append(p.aPressIntervalMs)
-                .append(", ").append(p.resultScreenAPressCount).append(");\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ2: BCロード待機 ----\n");
-        sb.append("  delay(").append(p.bcStartWaitMs).append(");\n");
-        sb.append("  // フェーズ開始前のクリア\n");
-        sb.append("  pushButton(Button::B, 200, 2);\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ3: BC → エリア4 へダッシュ ----\n");
-        sb.append("  // 左スティック上 + Rボタン（ダッシュ）\n");
-        sb.append("  tiltLeftStick(Stick::NEUTRAL, Stick::MIN, ").append(p.bcToArea4TravelMs)
-                .append(", Button::R);\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ4: エリア境界でA（複数回、空振り対策） → エリア切替ロード ----\n");
-        sb.append("  pushButton(Button::A, 300, 3);\n");
-        sb.append("  delay(").append(p.areaLoadWaitMs).append(");\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ5: エリア4内で採掘ポイントへ前進 ----\n");
-        sb.append("  // フェーズ開始前のクリア\n");
-        sb.append("  pushButton(Button::B, 200, 2);\n");
-        sb.append("  tiltLeftStick(Stick::NEUTRAL, Stick::MIN, ").append(p.area4InnerMoveMs).append(");\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ6: 採掘（A連打） ----\n");
-        sb.append("  pushButton(Button::A, ").append(p.diggingAPressIntervalMs)
-                .append(", ").append(p.diggingAPressCount).append(");\n");
-        sb.append("  // 採掘後のメッセージクリア（ピッケル破損・採掘完了など）\n");
-        sb.append("  pushButton(Button::B, 200, 5);\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ7: モドリ玉使用でBCへ帰還 ----\n");
-        sb.append("  // メニューを開く\n");
-        sb.append("  pushButton(Button::PLUS, 800);\n");
-        for (int i = 0; i < p.modoriDaArrowDownCount; i++) {
-            sb.append("  pushHat(Hat::DOWN, 200);\n");
-        }
-        sb.append("  // TODO: 実機で「アイテム」→「モドリ玉」までの↓回数を合わせる\n");
-        sb.append("  pushButton(Button::A, 500);  // アイテム選択\n");
-        sb.append("  pushButton(Button::A, 500);  // モドリ玉使用\n");
-        sb.append("  pushButton(Button::A, 500);  // 使用確認\n");
-        sb.append("  delay(").append(p.modoriDaUseWaitMs).append(");\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ8: BC内で納品ボックスへ移動 ----\n");
-        sb.append("  // フェーズ開始前のクリア（モドリ玉のメッセージなど）\n");
-        sb.append("  pushButton(Button::B, 200, 3);\n");
-        sb.append("  tiltLeftStick(Stick::NEUTRAL, Stick::MIN, ").append(p.deliveryBoxTravelMs).append(");\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ9: 納品ボックスでネコタクチケット納品 ----\n");
-        sb.append("  pushButton(Button::A, ").append(p.aPressIntervalMs)
-                .append(", ").append(p.deliveryAPressCount).append(");\n");
-        sb.append("\n");
-        sb.append("  // ---- フェーズ10: 報酬画面 → 結果画面（次ループへ） ----\n");
-        sb.append("  // 前半はA連打（報酬表示を進める）\n");
-        int firstHalf = Math.max(p.rewardScreenAPressCount / 2, 1);
-        int secondHalf = Math.max(p.rewardScreenAPressCount - firstHalf, 1);
-        sb.append("  pushButton(Button::A, ").append(p.aPressIntervalMs)
-                .append(", ").append(firstHalf).append(");\n");
-        sb.append("  // 後半はB連打（「鑑定する」誤爆を防止しながら画面を進める）\n");
-        sb.append("  pushButton(Button::B, ").append(p.aPressIntervalMs)
-                .append(", ").append(secondHalf).append(");\n");
-        sb.append("\n");
-        sb.append("  // ループ末尾のクリア\n");
-        sb.append("  pushButton(Button::B, 200, 2);\n");
-        sb.append("  delay(500);\n");
-        sb.append("}\n");
-        return sb.toString();
     }
 }
