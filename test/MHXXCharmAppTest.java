@@ -232,6 +232,8 @@ public final class MHXXCharmAppTest {
 
         String code2 = MHXXCharmApp.generateComboCode2(12_345, 200, true);
         check(code2.contains("unsigned long wait_ms = 12345;"), "code2 wait literal");
+        check(code2.contains("目標投入F") && code2.contains("概算"),
+                "code2 labels deposit frame and warns that waiting can drift");
         check(code2.indexOf("delay(wait_ms);") < code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);"),
                 "code2 waits at item box before walking to room service");
         check(code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);") < code2.indexOf("// Step 4: ルームサービスに話しかけ"),

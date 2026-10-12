@@ -4753,8 +4753,9 @@ public class MHXXCharmApp extends JFrame {
         if (offsetFrames > 0) {
             long offsetMs = Math.round(offsetFrames / 30.0 * 1000);
             sb.append("//   - wait_ms は自宅アイテムボックス前の追加待機時間 (ms)\n");
-            sb.append("//     計算式: wait_ms = (目標F - 調合基準F - オフセットF) / 30 * 1000\n");
+            sb.append("//     概算式: wait_ms = (目標投入F - 調合基準F - オフセットF) / 30 * 1000\n");
             sb.append("//     オフセットは調合基準Fから待機0の錬金確定まで実測する\n");
+            sb.append("//     実機では自宅待機中の追加消費が変動するため、長い待機は短時間の実測だけで確定させない\n");
             sb.append("//     オフセット適用済み: %d フレーム (約 %d ms)\n".formatted(offsetFrames, offsetMs));
         } else {
             sb.append("//   - wait_ms = 0 の場合はオフセット測定用。実測後に再生成する\n");
@@ -6186,7 +6187,7 @@ public class MHXXCharmApp extends JFrame {
 
         JPanel safetyRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         safetyRow.setOpaque(false);
-        safetyRow.add(new JLabel("<html><span style='color:#ffcc77;'>コード2の長時間待機前にSwitchの自動スリープをOFF。移動・メニュー位置は実機で確認。</span></html>"));
+        safetyRow.add(new JLabel("<html><span style='color:#ffcc77;'>待機Fの換算は概算。長時間は追加消費を実測して再調整。Switchの自動スリープをOFFにし、移動・メニュー位置も実機で確認。</span></html>"));
         settings.add(safetyRow);
 
         // --- キャリブレーション領域 ---
