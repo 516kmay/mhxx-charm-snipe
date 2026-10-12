@@ -9,6 +9,7 @@ public final class MHXXCharmAppTest {
     public static void main(String[] args) {
         testJumpMatchesSequentialRng();
         testKnownCharmAndRangeSearch();
+        testMeldingAimFramesByRecipeAndRank();
         testSecondSkillNormalization();
         testComboReverseSearchAndStartFrame();
         testComboSketchGeneration();
@@ -65,6 +66,26 @@ public final class MHXXCharmAppTest {
                 data, conditions, 0, 1_700L, 30, null, null, null);
         check(multiHits.stream().anyMatch(row -> ((Long)row[0]) == 1716L),
                 "multi search start frame must include known 1716F charm");
+    }
+
+    private static void testMeldingAimFramesByRecipeAndRank() {
+        equal(3, MHXXCharmApp.meldingAimFrames(0, 7_934L, false, 4).size(),
+                "published weathered charm has three Juju rank-4 aim points");
+        equal(List.of(), MHXXCharmApp.meldingAimFrames(1, 3_526_870L, false, 4),
+                "old charm cannot be obtained with Juju rank 4 at this target");
+        equal(List.of(3_526_864L), MHXXCharmApp.meldingAimFrames(1, 3_526_870L, false, 3),
+                "Juju rank 3 old charm uses the earlier deposit frame");
+        equal(List.of(3_526_870L), MHXXCharmApp.meldingAimFrames(1, 3_526_870L, true, 4),
+                "Halcyon rank 4 old charm is available at the target frame");
+
+        List<Long> shining = MHXXCharmApp.meldingAimFrames(2, 12_747L, true, 4);
+        equal(8, shining.size(), "published shining-charm example has eight rank-4 aim points");
+        check(shining.contains(12_733L) && shining.contains(12_741L),
+                "published shining-charm deposit frames are included");
+        equal(List.of(), MHXXCharmApp.meldingAimFrames(0, 12_747L, true, 4),
+                "Halcyon never yields a weathered charm");
+        expectInvalid(() -> MHXXCharmApp.meldingAimFrames(1, 100L, false, 0),
+                "melding rank must be 1..4");
     }
 
     private static void testSecondSkillNormalization() {

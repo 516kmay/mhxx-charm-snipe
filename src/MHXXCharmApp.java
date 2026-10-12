@@ -573,6 +573,55 @@ public class MHXXCharmApp extends JFrame {
         return aimPoints;
     }
 
+    /** 天運・マカフシギの投入ランクごとに、指定のお守りが出る投入フレームを返す。 */
+    static List<Long> meldingAimFrames(int kind, long targetFrame, boolean halcyon, int rank) {
+        if (kind < 0 || kind > 2 || targetFrame < 0 || rank < 1 || rank > 4)
+            throw new IllegalArgumentException("お守り種別・フレーム・投入ランクが不正です");
+        List<Long> frames = new ArrayList<>();
+        int maxOffset = (halcyon ? 5 : 3) * 6;
+        for (int offset = maxOffset; offset >= 0; offset--) {
+            long deposit = targetFrame - offset;
+            if (deposit < 1) continue;
+            RNG rng = new RNG();
+            rng.jump(deposit - 1);
+            long seed = rng.r0;
+            int[] colors;
+            if (halcyon) {
+                int[] widths = {0, 3, 4, 4, 5};
+                int[] minimums = {0, 1, 1, 2, 2};
+                colors = new int[meldingRand(seed, 1) % widths[rank] + minimums[rank]];
+                int step = 2;
+                for (int i = 0; i < colors.length; i++) {
+                    int value;
+                    do { value = meldingRand(seed, step++) % 100; } while (value >= 85);
+                    colors[i] = value < 10 ? 3 : value < 55 ? 2 : 1;
+                }
+            } else {
+                int blue = rank == 4 ? 2 : meldingRand(seed, 1) % 2 + (rank == 3 ? 1 : 0);
+                int red = rank == 1 ? 1 : meldingRand(seed, 2) % 2 + 1;
+                colors = new int[blue + red];
+                Arrays.fill(colors, blue, colors.length, 1);
+            }
+            rng.roll();
+            for (int color : colors) {
+                if (rng.f - 7 == targetFrame && color == kind) {
+                    frames.add(deposit);
+                    break;
+                }
+                int threshold = switch (color) { case 0 -> 15; case 1 -> 25; case 2 -> 35; default -> 100; };
+                int rolls = rng.r2 % 100 < threshold ? 4 : 6;
+                for (int i = 0; i < rolls; i++) rng.roll();
+            }
+        }
+        return frames;
+    }
+
+    static int meldingRand(long seed, int steps) {
+        int value = (int)(seed & 0xFFFF);
+        for (int i = 0; i < steps; i++) value = Math.max(value, 1) * 176 % 65363;
+        return value;
+    }
+
     /** クエスト報酬時の孤立判定の結果を表すレコード */
     record AimpointQuestResult(
         int aimPointCount,    // 狙い目の数 (= b[i] <= num1 の数)
