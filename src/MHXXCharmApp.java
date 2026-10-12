@@ -1057,6 +1057,9 @@ public class MHXXCharmApp extends JFrame {
     JTextField comboArdTargetFField;   // 調合Arduinoタブの「目標F」（調合スナイプの目標Fと連動）
     JTextField comboTimingAdjustField; // 初回不要。実機の着弾ズレを累積補正する
     String comboLegacyOffset;          // 旧実測値は計算に使わず設定ファイル内だけ保持する
+    Double comboCalibratedFc;          // 500ms周期で実測したContinue1回消費。未校正はnull。
+    JLabel comboFcStatus;
+    JComboBox<String> calibrationTarget;
     DefaultTableModel rewardModel;
     JTable rewardTable;
     JLabel rewardCalcResult;
@@ -1214,6 +1217,8 @@ public class MHXXCharmApp extends JFrame {
             if (comboArdTargetFField != null) props.setProperty("combo.ardTargetF", comboArdTargetFField.getText());
             if (comboTimingAdjustField != null) props.setProperty("combo.timingAdjust.v3", comboTimingAdjustField.getText());
             if (comboLegacyOffset != null) props.setProperty("combo.offset.roomService.v2", comboLegacyOffset);
+            if (comboCalibratedFc != null) props.setProperty("combo.continueFrames.500ms", comboCalibratedFc.toString());
+            if (calibrationTarget != null) props.setProperty("calibration.target", String.valueOf(calibrationTarget.getSelectedIndex()));
 
             // 待機時間の補正
             if (adjTargetField != null) props.setProperty("adj.target", adjTargetField.getText());
@@ -1307,6 +1312,12 @@ public class MHXXCharmApp extends JFrame {
             // 旧オフセットは待機位置と意味が違うため、新方式の補正値として再利用しない。
             comboLegacyOffset = props.getProperty("combo.offset.roomService.v2");
             if (comboTimingAdjustField != null) comboTimingAdjustField.setText(props.getProperty("combo.timingAdjust.v3", "0"));
+            String savedComboFc = props.getProperty("combo.continueFrames.500ms", "");
+            if (!savedComboFc.isBlank()) {
+                try { applyComboContinueCalibration(Double.parseDouble(savedComboFc)); }
+                catch (IllegalArgumentException ignored) { /* 無効な保存値は未校正として扱う。 */ }
+            }
+            if (calibrationTarget != null) safeSetIndex(calibrationTarget, props.getProperty("calibration.target", "0"));
 
             // 待機時間の補正
             String savedAdjTarget = props.getProperty("adj.target", "");
@@ -4437,7 +4448,15 @@ public class MHXXCharmApp extends JFrame {
         return tab;
     }
 
-    String generateArduinoCode(int numContinue, long waitMs) {
+    static String generateArduinoCode(int numContinue, long waitMs) {
+        return generateArduinoCode(numContinue, waitMs, 400);
+    }
+
+    static String generateArduinoCode(int numContinue, long waitMs, int continuePeriodMs) {
+        if (numContinue < 0 || waitMs < 0 || waitMs > 0xffff_ffffL
+                || (continuePeriodMs != 400 && continuePeriodMs != 500)) {
+            throw new IllegalArgumentException("回数・待機時間・Continue周期を確認してください");
+        }
         var header = """
                 // MHXX Charm Snipe Tool - Auto Generated Arduino Code
                 // Continue連打法対応
@@ -4474,27 +4493,13 @@ public class MHXXCharmApp extends JFrame {
 
                 """.formatted(numContinue, waitMs);
 
-        var continueBlock = numContinue > 0 ? """
-                    // 事前待機 (10秒)
-                    waitWithKeepAlive(10000);
-
-                    // Continue A→Bキャンセル (%d回)
-                    for (unsigned long i = 0; i < %d; i++){
-                        SwitchControlLibrary().pressButton(Button::A);
-                        SwitchControlLibrary().sendReport();
-                        delay(100);
-                        SwitchControlLibrary().releaseButton(Button::A);
-                        SwitchControlLibrary().sendReport();
-                        delay(100);
-                        SwitchControlLibrary().pressButton(Button::B);
-                        SwitchControlLibrary().sendReport();
-                        delay(100);
-                        SwitchControlLibrary().releaseButton(Button::B);
-                        SwitchControlLibrary().sendReport();
-                        delay(100);
-                    }
-
-                """.formatted(numContinue, numContinue) : "";
+        StringBuilder continueBlock = new StringBuilder();
+        if (numContinue > 0) {
+            if (continuePeriodMs == 400) {
+                continueBlock.append("    // 事前待機 (10秒)\n    waitWithKeepAlive(10000);\n\n");
+            }
+            appendContinueCycles(continueBlock, numContinue, continuePeriodMs);
+        }
 
         var tail = """
                     // Continue決定 → ロード
@@ -4591,7 +4596,23 @@ public class MHXXCharmApp extends JFrame {
                 void loop(){}
                 """.formatted(waitMs, waitMs);
 
-        return header + continueBlock + tail;
+        return "// Continue周期: " + continuePeriodMs + "ms\n" + header + continueBlock + tail;
+    }
+
+    /** 校正と本番で同じContinue操作を使う。 */
+    private static void appendContinueCycles(StringBuilder sb, int count, int periodMs) {
+        sb.append("    for (unsigned long i = 0; i < ").append(count).append("; i++) {\n");
+        if (periodMs == 500) sb.append("        unsigned long cycle_start = millis();\n");
+        sb.append("        SwitchControlLibrary().pressButton(Button::A);\n");
+        sb.append("        SwitchControlLibrary().sendReport();\n        delay(100);\n");
+        sb.append("        SwitchControlLibrary().releaseButton(Button::A);\n");
+        sb.append("        SwitchControlLibrary().sendReport();\n        delay(100);\n");
+        sb.append("        SwitchControlLibrary().pressButton(Button::B);\n");
+        sb.append("        SwitchControlLibrary().sendReport();\n        delay(100);\n");
+        sb.append("        SwitchControlLibrary().releaseButton(Button::B);\n");
+        sb.append("        SwitchControlLibrary().sendReport();\n        delay(100);\n");
+        if (periodMs == 500) sb.append("        while (millis() - cycle_start < 500UL) delay(1);\n");
+        sb.append("    }\n\n");
     }
 
     // ================================================================
@@ -4658,22 +4679,7 @@ public class MHXXCharmApp extends JFrame {
         // Step 2: Continue連打
         if (numContinue > 0) {
             sb.append("    // Step 2: Continue連打 (").append(numContinue).append("回、1周期500ms)\n");
-            sb.append("    for (unsigned long i = 0; i < ").append(numContinue).append("; i++) {\n");
-            sb.append("        unsigned long cycle_start = millis();\n");
-            sb.append("        SwitchControlLibrary().pressButton(Button::A);\n");
-            sb.append("        SwitchControlLibrary().sendReport();\n");
-            sb.append("        delay(100);\n");
-            sb.append("        SwitchControlLibrary().releaseButton(Button::A);\n");
-            sb.append("        SwitchControlLibrary().sendReport();\n");
-            sb.append("        delay(100);\n");
-            sb.append("        SwitchControlLibrary().pressButton(Button::B);\n");
-            sb.append("        SwitchControlLibrary().sendReport();\n");
-            sb.append("        delay(100);\n");
-            sb.append("        SwitchControlLibrary().releaseButton(Button::B);\n");
-            sb.append("        SwitchControlLibrary().sendReport();\n");
-            sb.append("        delay(100);\n");
-            sb.append("        while (millis() - cycle_start < 500UL) delay(1);\n");
-            sb.append("    }\n\n");
+            appendContinueCycles(sb, numContinue, 500);
         }
 
         // Step 3: Continue決定 → ロード
@@ -4983,6 +4989,21 @@ public class MHXXCharmApp extends JFrame {
     // ================================================================
     // Calibration Tab
     // ================================================================
+    static double calculateCalibratedContinueFrames(long actualF, double basicF, long waitMs,
+                                                     int count, int periodMs) {
+        if (actualF <= 0 || !Double.isFinite(basicF) || basicF < 0 || waitMs < 0
+                || waitMs > 0xffff_ffffL || count <= 0 || (periodMs != 400 && periodMs != 500)) {
+            throw new IllegalArgumentException("実測F・基本消費・待機時間・Continue回数を確認してください");
+        }
+        // 400msの単独Arduinoコードだけ、Continueの前に10秒待つ。
+        long preWaitMs = periodMs == 400 ? 10_000 : 0;
+        return comboContinueFrames((actualF - basicF - 0.030 * (waitMs + preWaitMs)) / count);
+    }
+
+    private int selectedCalibrationPeriodMs() {
+        return calibrationTarget.getSelectedIndex() == 0 ? 500 : 400;
+    }
+
     JPanel buildCalibrationTab() {
         JPanel tab = new JPanel(new BorderLayout(8, 8));
         tab.setBackground(BG);
@@ -4992,6 +5013,14 @@ public class MHXXCharmApp extends JFrame {
         top.setOpaque(false);
         top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
 
+        JPanel targetRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
+        targetRow.setOpaque(false);
+        targetRow.add(label("校正対象:"));
+        calibrationTarget = new JComboBox<>(new String[]{"調合Arduino（500ms周期）", "Arduino（400ms周期）"});
+        calibrationTarget.setToolTipText("本番と同じ周期のテストコードで測定し、選択したタブに消費量を反映します。");
+        targetRow.add(calibrationTarget);
+        top.add(targetRow);
+
         // 計算式の説明
         JPanel formulaPanel = titled("計算式");
         formulaPanel.setLayout(new FlowLayout(FlowLayout.LEFT, 8, 8));
@@ -4999,7 +5028,8 @@ public class MHXXCharmApp extends JFrame {
             "<html><body style='color:#e8e8e8;'>" +
             "<b style='font-size:14px;'>目標フレーム = 基本消費(F) + Continue1回消費(F) × 回数 + 0.030(F/ms) × 待機時間(ms)</b><br><br>" +
             "<span style='color:#8888aa;'>「基本消費」と「Continue1回消費」は環境ごとに異なるため、以下の手順で実測します。<br>" +
-            "測定した値はArduinoタブの入力欄に自動反映されます。</span><br><br>" +
+            "Continue消費は選択した校正対象に自動反映されます。調合Arduinoの回数概算にも使います。<br>" +
+            "基本消費は校正計算用です。調合Arduinoの投入時刻は外部ツールで特定したFから計算します。</span><br><br>" +
             "<span style='color:#ffc107;'>⚠ 精度に関する注意:</span><span style='color:#8888aa;'> 短い測定結果を大きなContinue回数に外挿すると誤差が拡大します。<br>" +
             "できるだけ本番に近い回数で測定してください。ただし消費は乱数位置にも依存し、回数を増やしても線形式の精度は保証されません。<br>" +
             "7500回以上で大きなズレの実機例があります。長距離では調合逆算で現在Fを再特定してください。</span>" +
@@ -5030,7 +5060,7 @@ public class MHXXCharmApp extends JFrame {
         s1r2.setOpaque(false);
         s1r2.add(label("実測フレーム:"));
         JTextField calActualC = makeField("", 12);
-        calActualC.setToolTipText("出たお守りを周辺表示で照合して特定したフレーム番号");
+        calActualC.setToolTipText("出たお守りを周辺表示で照合した実際の投入F。お守り生成Fをそのまま使わないでください。");
         s1r2.add(calActualC);
         JButton calCBtn = makeButton("基本消費を計算", ACCENT);
         s1r2.add(calCBtn);
@@ -5042,7 +5072,7 @@ public class MHXXCharmApp extends JFrame {
         top.add(step1);
 
         // ステップ2: Continue消費の測定
-        JPanel step2 = titled("ステップ2: Continue消費の測定（基本消費が確定した後 ─ Continue回数は大きいほど精度UP）");
+        JPanel step2 = titled("ステップ2: Continue消費の測定（本番と同じ周期のコードで実測）");
         step2.setLayout(new BoxLayout(step2, BoxLayout.Y_AXIS));
 
         JPanel s2r1 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
@@ -5072,7 +5102,7 @@ public class MHXXCharmApp extends JFrame {
         s2r2.setOpaque(false);
         s2r2.add(label("実測フレーム:"));
         JTextField calActualFc = makeField("", 12);
-        calActualFc.setToolTipText("出たお守りを周辺表示で照合して特定したフレーム番号");
+        calActualFc.setToolTipText("出たお守りを周辺表示で照合した実際の投入F。お守り生成Fをそのまま使わないでください。");
         s2r2.add(calActualFc);
         JButton calFcBtn = makeButton("Continue消費を計算", ACCENT);
         s2r2.add(calFcBtn);
@@ -5126,14 +5156,19 @@ public class MHXXCharmApp extends JFrame {
         // ロジック
         double f2const = 0.030;
 
+        calibrationTarget.addActionListener(e -> {
+            calCodeArea.setText("");
+            calFcResult.setText("");
+        });
+
         calGenC.addActionListener(e -> {
             try {
                 long waitMs = Long.parseLong(calT2forC.getText().trim());
-                calCodeArea.setText(generateArduinoCode(0, waitMs));
+                calCodeArea.setText(generateArduinoCode(0, waitMs, selectedCalibrationPeriodMs()));
                 calCodeArea.setCaretPosition(0);
                 statusLabel.setText("キャリブレーション用コード生成: Continue 0回, 待機時間=%dms".formatted(waitMs));
-            } catch (NumberFormatException ex) {
-                statusLabel.setText("待機時間の値を正しく入力してください");
+            } catch (IllegalArgumentException ex) {
+                statusLabel.setText(ex.getMessage());
             }
         });
 
@@ -5141,25 +5176,28 @@ public class MHXXCharmApp extends JFrame {
             try {
                 int nc = Integer.parseInt(calNcForFc.getText().trim());
                 long waitMs = Long.parseLong(calT2forFc.getText().trim());
-                calCodeArea.setText(generateArduinoCode(nc, waitMs));
+                calCodeArea.setText(generateArduinoCode(nc, waitMs, selectedCalibrationPeriodMs()));
                 calCodeArea.setCaretPosition(0);
-                statusLabel.setText("キャリブレーション用コード生成: Continue %d回, 待機時間=%dms".formatted(nc, waitMs));
-            } catch (NumberFormatException ex) {
-                statusLabel.setText("数値を正しく入力してください");
+                statusLabel.setText("校正用コード生成: %dms周期、Continue %d回、待機時間=%dms".formatted(selectedCalibrationPeriodMs(), nc, waitMs));
+            } catch (IllegalArgumentException ex) {
+                statusLabel.setText(ex.getMessage());
             }
         });
 
         calCBtn.addActionListener(e -> {
             try {
-                double t2 = Double.parseDouble(calT2forC.getText().trim());
+                long t2 = Long.parseLong(calT2forC.getText().trim());
                 long actual = Long.parseLong(calActualC.getText().trim());
                 double calcC = actual - f2const * t2;
+                if (t2 < 0 || t2 > 0xffff_ffffL || actual <= 0 || calcC < 0) {
+                    throw new IllegalArgumentException("実測Fと待機時間の組み合わせを確認してください");
+                }
                 long roundedC = Math.round(calcC);
                 calCResult.setText("基本消費 = %d  (%.1f)".formatted(roundedC, calcC));
                 arduinoC.setText(String.valueOf(roundedC));
-                statusLabel.setText("キャリブレーション: 基本消費フレーム = " + roundedC + " をArduinoタブに反映しました");
-            } catch (NumberFormatException ex) {
-                calCResult.setText("数値を入力してください");
+                statusLabel.setText("校正計算用の基本消費フレーム = " + roundedC + " を設定しました");
+            } catch (IllegalArgumentException ex) {
+                calCResult.setText(ex.getMessage());
             }
         });
         calActualC.addActionListener(calCBtn.getActionListeners()[0]);
@@ -5167,17 +5205,21 @@ public class MHXXCharmApp extends JFrame {
         calFcBtn.addActionListener(e -> {
             try {
                 int nc = Integer.parseInt(calNcForFc.getText().trim());
-                double t2 = Double.parseDouble(calT2forFc.getText().trim());
+                long t2 = Long.parseLong(calT2forFc.getText().trim());
                 long actual = Long.parseLong(calActualFc.getText().trim());
                 double C = Double.parseDouble(arduinoC.getText().trim());
-                if (nc <= 0) { calFcResult.setText("Continue回数は1以上にしてください"); return; }
-                double calcFc = (actual - C - f2const * t2) / nc;
-                long roundedFc = (long) calcFc; // 切り捨て（Nc最小＝待機時間最大で精度確保）
-                calFcResult.setText("Continue消費 = %d  (%.1f)".formatted(roundedFc, calcFc));
-                arduinoFc.setText(String.valueOf(roundedFc));
-                statusLabel.setText("キャリブレーション: Continue1回消費 = " + roundedFc + " をArduinoタブに反映しました");
-            } catch (NumberFormatException ex) {
-                calFcResult.setText("数値を入力してください");
+                int periodMs = selectedCalibrationPeriodMs();
+                double calcFc = calculateCalibratedContinueFrames(actual, C, t2, nc, periodMs);
+                calFcResult.setText("Continue消費 = %.3f F/回".formatted(calcFc));
+                if (periodMs == 500) {
+                    applyComboContinueCalibration(calcFc);
+                    statusLabel.setText("校正したContinue消費を調合Arduinoの回数概算へ反映しました");
+                } else {
+                    arduinoFc.setText(String.valueOf(calcFc));
+                    statusLabel.setText("校正したContinue消費をArduinoタブへ反映しました");
+                }
+            } catch (IllegalArgumentException ex) {
+                calFcResult.setText(ex.getMessage());
             }
         });
         calActualFc.addActionListener(calFcBtn.getActionListeners()[0]);
@@ -6020,6 +6062,26 @@ public class MHXXCharmApp extends JFrame {
     private static final long COMBO_MIN_RESUME_MS = 15_000; // 確認画面までの公称約10.46秒に実機用の余裕を持たせる。
     private static final long COMBO_MIN_LEAD_FRAMES = 750; // 調合開始から投入まで最低25秒の余裕を残す。
 
+    static double comboContinueFrames(Double calibratedFc) {
+        double fc = calibratedFc == null ? COMBO_CONTINUE_FRAMES : calibratedFc;
+        if (!Double.isFinite(fc) || fc <= 0) {
+            throw new IllegalArgumentException("Continue1回消費は正の数値にしてください");
+        }
+        return fc;
+    }
+
+    void applyComboContinueCalibration(double fc) {
+        comboCalibratedFc = comboContinueFrames(fc);
+        refreshComboFcStatus();
+    }
+
+    private void refreshComboFcStatus() {
+        if (comboFcStatus != null) {
+            comboFcStatus.setText("Continue1回消費: %.3f F（%s）".formatted(
+                    comboContinueFrames(comboCalibratedFc), comboCalibratedFc == null ? "未校正の目安" : "校正済み"));
+        }
+    }
+
     static boolean transferSelectedComboFrame(JTable table, JTextField destination) {
         int row = table.getSelectedRow();
         if (row < 0) return false;
@@ -6045,10 +6107,11 @@ public class MHXXCharmApp extends JFrame {
         return (int) recommended;
     }
 
-    static int estimateInitialComboContinueCount(long targetF) {
+    static int estimateInitialComboContinueCount(long targetF, double fc) {
         if (targetF <= 0) throw new IllegalArgumentException("目標Fは正の値を入力してください");
-        // shortcut: 500ms周期で717F/回、目標F/717−3からさらに2回引く経験則。実行後は調合で現在Fを特定する。
-        double count = Math.max(0, Math.floor(targetF / COMBO_CONTINUE_FRAMES) - 5);
+        comboContinueFrames(fc);
+        // shortcut: 校正した消費で概算し5回分の余裕を残す。実行後は外部ツールで現在Fを特定する。
+        double count = Math.max(0, Math.floor(targetF / fc) - 5);
         if (count > Integer.MAX_VALUE) throw new IllegalArgumentException("Continue回数が大きすぎます");
         return (int) count;
     }
@@ -6096,7 +6159,7 @@ public class MHXXCharmApp extends JFrame {
             "① Continue回数を概算してコード1を実行 → 調合を録画してHOMEで中断<br>" +
             "② 録画を外部ツールで解析 → 表示された調合開始Fを下の欄に入力<br>" +
             "③ コード2でルームサービスへ移動し、投入確認画面で目標時刻まで待って確定<br>" +
-            "※ 初回の校正は不要。実機でずれた場合だけ詳細設定の着弾補正Fを使います。" +
+            "※ 初回は着弾補正F=0で投入できます。実機でずれた場合だけ詳細設定の補正Fを使います。" +
             "</body></html>"));
         settings.add(descRow);
 
@@ -6113,7 +6176,7 @@ public class MHXXCharmApp extends JFrame {
         comboArdTargetFField.setToolTipText("周辺表示の投入候補F。お守り自体の生成Fではありません（調合スナイプと連動）。");
         targetRow.add(comboArdTargetFField);
         JButton estimateNcBtn = makeButton("Continue回数を概算", GREEN);
-        estimateNcBtn.setToolTipText("500ms周期の経験則による初回目安。録画で現在Fを必ず再特定します。");
+        estimateNcBtn.setToolTipText("500ms周期の校正値で概算します。未校正時は717F/回を使います。実行後は録画からFを再特定します。");
         targetRow.add(estimateNcBtn);
         settings.add(targetRow);
 
@@ -6164,6 +6227,20 @@ public class MHXXCharmApp extends JFrame {
         JButton gen1Btn = makeButton("▶ Continue・調合コードを生成", BTN_BG);
         c1Row.add(gen1Btn);
         settings.add(c1Row);
+
+        JPanel rateRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        rateRow.setOpaque(false);
+        comboFcStatus = new JLabel();
+        comboFcStatus.setForeground(FG);
+        refreshComboFcStatus();
+        rateRow.add(comboFcStatus);
+        JButton calibrateContinueBtn = makeButton("消費量を校正", BTN_BG);
+        calibrateContinueBtn.addActionListener(e -> {
+            calibrationTarget.setSelectedIndex(0);
+            selectTab("キャリブレーション");
+        });
+        rateRow.add(calibrateContinueBtn);
+        settings.add(rateRow);
 
         JPanel c1Options = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         c1Options.setOpaque(false);
@@ -6364,7 +6441,7 @@ public class MHXXCharmApp extends JFrame {
             try {
                 if (comboNcField.getText().isBlank()) {
                     comboNcField.setText(String.valueOf(estimateInitialComboContinueCount(
-                            Long.parseLong(comboTargetFField.getText().trim()))));
+                            Long.parseLong(comboTargetFField.getText().trim()), comboContinueFrames(comboCalibratedFc))));
                 }
                 int nc = Integer.parseInt(comboNcField.getText().trim());
                 int downKeys = Integer.parseInt(comboDownKeysField.getText().trim());
@@ -6381,13 +6458,14 @@ public class MHXXCharmApp extends JFrame {
         estimateNcBtn.addActionListener(e -> {
             try {
                 long targetF = Long.parseLong(comboTargetFField.getText().trim());
+                double fc = comboContinueFrames(comboCalibratedFc);
                 boolean hasMeasurement = !comboNcField.getText().isBlank()
                         && !comboCurrentFField.getText().isBlank();
                 int nextNc = hasMeasurement
                         ? estimateComboContinueCount(targetF,
                                 Long.parseLong(comboCurrentFField.getText().trim()),
-                                Integer.parseInt(comboNcField.getText().trim()), COMBO_CONTINUE_FRAMES)
-                        : estimateInitialComboContinueCount(targetF);
+                                Integer.parseInt(comboNcField.getText().trim()), fc)
+                        : estimateInitialComboContinueCount(targetF, fc);
                 if (comboNcField.getText().equals(String.valueOf(nextNc)) && hasMeasurement) {
                     statusLabel.setText("追加Continueは不要です。調合開始Fからコード2の投入時刻を確認してください");
                     return;
@@ -6397,7 +6475,8 @@ public class MHXXCharmApp extends JFrame {
                     comboCurrentFField.setText(""); // 新しい回数では前回の測定Fを使えない
                     codeArea.setText("// Continue回数を更新しました。コード1を生成し直し、調合で現在Fを特定してください。");
                 }
-                statusLabel.setText(String.format("Continue %d回を概算（500ms周期の経験則）。コード1の録画で現在Fを必ず再特定してください", nextNc));
+                statusLabel.setText(String.format("Continue %d回を概算（1回消費 %.3fF、%s）。録画からFを再特定してください",
+                        nextNc, fc, comboCalibratedFc == null ? "未校正の目安" : "校正値を適用"));
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(tab,
                         "目標F・Continue回数・調合開始Fを確認してください: " + ex.getMessage(),
