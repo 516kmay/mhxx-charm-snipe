@@ -300,13 +300,27 @@ public final class MHXXCharmAppTest {
         check(code2WithoutPairing.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ")
                         .contains("void setup() { delay(50); " + resumeSequence),
                 "code2 defaults to 50ms, Y three times, timer, HOME, and 500ms resume wait");
-        String receptionistRoute = "SwitchControlLibrary().pressButton(Button::R); "
-                + "SwitchControlLibrary().sendReport(); tiltLeftStick(Stick::MAX, Stick::MIN, 1500); "
-                + "SwitchControlLibrary().releaseButton(Button::R); SwitchControlLibrary().sendReport(); "
-                + "pushButton(Button::A, 250, 3);";
+        String receptionistRoute = """
+                SwitchControlLibrary().pressButton(Button::R);
+                SwitchControlLibrary().sendReport();
+                tiltLeftStick(Stick::NEUTRAL, Stick::MIN, 3000);
+                SwitchControlLibrary().releaseButton(Button::R);
+                SwitchControlLibrary().sendReport();
+                pushButton(Button::A, 250, 3);
+                pushButton(Button::B, 250, 4);
+                delay(100);
+                pushHat(Hat::UP);
+                pushButton(Button::A, 100);
+                pushHat(Hat::DOWN);
+                pushButton(Button::A, 100);
+                pushHat(Hat::DOWN, 50, 3);
+                pushButton(Button::A, 50, 5);
+                pushButton(Button::B, 250, 4);
+                """.replaceAll("\\s+", " ").trim();
         for (String code : new String[]{code2, code2WithoutPairing}) {
-            check(code.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").contains(receptionistRoute),
-                    "code2 dashes diagonally for 1500ms before talking to the receptionist");
+            String questAcceptance = code.substring(code.indexOf("// Step 6:"), code.indexOf("// Step 7:"))
+                    .replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").trim();
+            equal(receptionistRoute, questAcceptance, "code2 Step 6 matches the specified quest acceptance sequence");
         }
         String calibrationReceptionistRoute = "SwitchControlLibrary().pressButton(Button::R); "
                 + "SwitchControlLibrary().sendReport(); tiltLeftStick(Stick::NEUTRAL, Stick::MIN, 3000); "
