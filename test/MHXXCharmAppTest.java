@@ -1,6 +1,9 @@
 import java.util.List;
 import javax.swing.JPanel;
 import javax.swing.JTabbedPane;
+import javax.swing.JTable;
+import javax.swing.JTextField;
+import javax.swing.table.DefaultTableModel;
 
 /** 依存ライブラリなしで実行できる回帰テスト。 */
 public final class MHXXCharmAppTest {
@@ -16,6 +19,9 @@ public final class MHXXCharmAppTest {
         testComboReverseSearchAndStartFrame();
         testComboSketchGeneration();
         testComboBackupSketchGeneration();
+        testComboFrameTransfer();
+        testComboContinuePlanAndWait();
+        testComboContinueEstimate();
         testRewardConsumptionAndStartFrame();
         testRemovedLastTabRestoresTimerSelection();
         System.out.println("OK: " + assertions + " assertions");
@@ -288,6 +294,57 @@ public final class MHXXCharmAppTest {
                 "code3 invalid item set slot rejected");
         expectInvalid(() -> MHXXCharmApp.generateComboCode3(0, 0, 2, -2, 1, 1, false),
                 "code3 invalid recall menu position rejected");
+    }
+
+    private static void testComboFrameTransfer() {
+        DefaultTableModel model = new DefaultTableModel(
+                new Object[][]{{700L}, {300L}}, new Object[]{"調合基準F"});
+        JTable table = new JTable(model);
+        table.setAutoCreateRowSorter(true);
+        table.getRowSorter().toggleSortOrder(0);
+        table.setRowSelectionInterval(0, 0);
+        JTextField destination = new JTextField("old");
+        check(MHXXCharmApp.transferSelectedComboFrame(table, destination),
+                "selected reverse-search frame is transferable");
+        equal("300", destination.getText(), "sorted view frame reaches Arduino input");
+        table.clearSelection();
+        check(!MHXXCharmApp.transferSelectedComboFrame(table, destination),
+                "missing selection is rejected");
+        equal("300", destination.getText(), "missing selection leaves previous value unchanged");
+    }
+
+    private static void testComboContinueEstimate() {
+        equal(134, MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 1_500, 100, 717),
+                "target and measured baseline recommend 34 more Continue cycles with a safety margin");
+        equal(100, MHXXCharmApp.estimateComboContinueCount(74_500, 72_000, 1_500, 100, 717),
+                "short code2 wait needs no new code1 run");
+        equal(97, MHXXCharmApp.estimateComboContinueCount(73_000, 72_000, 1_500, 100, 717),
+                "overshot target recommends fewer Continue cycles");
+        expectInvalid(() -> MHXXCharmApp.estimateComboContinueCount(73_000, 72_000, 1_500, 0, 714),
+                "a target before the zero-Continue baseline is rejected");
+        expectInvalid(() -> MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 1_500, 100, 0),
+                "zero consumption rate is rejected");
+        expectInvalid(() -> MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 1_500, 100, Double.NaN),
+                "invalid consumption rate is rejected");
+    }
+
+    private static void testComboContinuePlanAndWait() {
+        equal(21_012, MHXXCharmApp.estimateInitialComboContinueCount(15_069_320),
+                "initial 500ms-cycle estimate leaves room for measurement and final wait");
+        equal(0, MHXXCharmApp.estimateInitialComboContinueCount(1_000),
+                "short target does not produce negative Continue count");
+        expectInvalid(() -> MHXXCharmApp.estimateInitialComboContinueCount(0),
+                "nonpositive target is rejected");
+        equal(283_333L, MHXXCharmApp.calculateComboWaitMs(100_000, 90_000, 1_500),
+                "remaining frames become code2 wait after measured offset");
+        equal(0L, MHXXCharmApp.calculateComboWaitMs(91_500, 90_000, 1_500),
+                "exact measured target needs no extra wait");
+        expectInvalid(() -> MHXXCharmApp.calculateComboWaitMs(91_499, 90_000, 1_500),
+                "target before measured deposit frame is rejected");
+        expectInvalid(() -> MHXXCharmApp.calculateComboWaitMs(100_000, 90_000, 0),
+                "unmeasured offset is rejected");
+        expectInvalid(() -> MHXXCharmApp.calculateComboWaitMs(200_000_000, 1, 1),
+                "wait exceeding Arduino unsigned long is rejected");
     }
 
     private static void expectInvalid(Runnable action, String message) {
