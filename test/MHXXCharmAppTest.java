@@ -233,28 +233,42 @@ public final class MHXXCharmAppTest {
         check(code1.indexOf("tiltLeftStick(Stick::MIN, 10, 2000);") < code1.indexOf("pushButton(Button::PLUS, 500);"),
                 "code1 moves to item box before crafting");
         check(code1.contains("holdButton(Button::A, 4000);"), "code1 four-second craft");
+        check(code1.contains("pushButton(Button::B, 250, 3);")
+                        && code1.contains("holdButton(Button::CAPTURE, 1500);")
+                        && code1.contains("delay(3000); // 録画保存待ち")
+                        && code1.contains("pushButton(Button::HOME, 500);"),
+                "code1 craft-to-HOME timing matches the deadline calculation");
         check(!MHXXCharmApp.generateComboCode1(0, 0).contains("tiltLeftStick(Stick::MIN, 10, 1100);"),
                 "code1 leaves absent Poogie alone");
 
-        String code2 = MHXXCharmApp.generateComboCode2(12_345, 200, true);
-        check(code2.contains("unsigned long wait_ms = 12345;"), "code2 wait literal");
-        check(code2.contains("目標投入F") && code2.contains("概算"),
-                "code2 labels deposit frame and warns that waiting can drift");
-        check(code2.indexOf("delay(wait_ms);") < code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);"),
-                "code2 waits at item box before walking to room service");
-        check(code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);") < code2.indexOf("// Step 4: ルームサービスに話しかけ"),
+        String code2 = MHXXCharmApp.generateComboCode2(15_345, true);
+        check(code2.contains("unsigned long target_elapsed_ms = 15345;"), "code2 deadline literal");
+        check(code2.contains("unsigned long resume_started_ms = millis();"),
+                "code2 starts timing when HOME resumes the game");
+        check(code2.contains("while ((unsigned long)(millis() - resume_started_ms) < target_elapsed_ms) delay(1);"),
+                "code2 waits for its deadline");
+        check(code2.indexOf("target_elapsed_ms") < code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);"),
+                "code2 carries the deadline through the route");
+        check(code2.indexOf("while ((unsigned long)(millis() - resume_started_ms) < target_elapsed_ms)") >
+                code2.indexOf("delay(1000);                    // ダイアログ表示の安定待ち"),
+                "code2 waits at the confirmation dialog after navigation");
+        check(code2.indexOf("while ((unsigned long)(millis() - resume_started_ms) < target_elapsed_ms)") <
+                code2.indexOf("pushButton(Button::A, 100, 2);"),
+                "code2 confirms immediately after its deadline");
+        check(code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);") < code2.indexOf("// Step 3: ルームサービスに話しかけ"),
                 "code2 uses room service after walking");
         check(code2.indexOf("pushButton(Button::X, 250);     // 自宅から村へ戻る") >
-                code2.indexOf("// Step 5: A連打で投入確定"), "code2 exits home after melding");
+                code2.indexOf("// Step 4: 移動・メニュー時間を含めた時刻で投入確定"), "code2 exits home after melding");
         check(code2.contains("pressButton(Button::L);") && code2.contains("pressButton(Button::R);"),
                 "code2 optional simultaneous L+R pairing");
         check(!code2.contains("waitWithKeepAlive"), "code2 wait does not press a menu button");
-        check(!MHXXCharmApp.generateComboCode2(0, -1).contains("pressButton(Button::L);"),
+        check(!MHXXCharmApp.generateComboCode2(15_345, false).contains("pressButton(Button::L);"),
                 "code2 does not assume pairing screen by default");
         expectInvalid(() -> MHXXCharmApp.generateComboCode1(-1, 0, 0, false), "negative Continue rejected");
         expectInvalid(() -> MHXXCharmApp.generateComboCode1(0, 0, -1, false), "negative pre-load wait rejected");
-        expectInvalid(() -> MHXXCharmApp.generateComboCode2(-1, 0), "negative code2 wait rejected");
-        expectInvalid(() -> MHXXCharmApp.generateComboCode2(0x1_0000_0000L, 0), "wait overflow rejected");
+        expectInvalid(() -> MHXXCharmApp.generateComboCode2(-1, false), "negative code2 deadline rejected");
+        expectInvalid(() -> MHXXCharmApp.generateComboCode2(14_999, false), "too-short code2 deadline rejected");
+        expectInvalid(() -> MHXXCharmApp.generateComboCode2(0x1_0000_0000L, false), "deadline overflow rejected");
     }
 
     private static void testComboBackupSketchGeneration() {
@@ -279,7 +293,7 @@ public final class MHXXCharmAppTest {
                 "code3 crafting through HOME must match code1 exactly");
         check(code3.contains("pressButton(Button::L);") && code3.contains("pressButton(Button::R);"),
                 "code3 optional controller pairing");
-        check(code3.contains("新しい録画から調合基準Fを再特定"),
+        check(code3.contains("新しい録画から調合開始Fを再特定"),
                 "code3 directs new frame measurement");
         String firstSlot = MHXXCharmApp.generateComboCode3(0, 0, 0, 0, 1, 0, false);
         check(!firstSlot.contains("// 登録番号 "), "first item set slot needs no movement");
@@ -298,7 +312,7 @@ public final class MHXXCharmAppTest {
 
     private static void testComboFrameTransfer() {
         DefaultTableModel model = new DefaultTableModel(
-                new Object[][]{{700L}, {300L}}, new Object[]{"調合基準F"});
+                new Object[][]{{700L}, {300L}}, new Object[]{"調合開始F"});
         JTable table = new JTable(model);
         table.setAutoCreateRowSorter(true);
         table.getRowSorter().toggleSortOrder(0);
@@ -314,17 +328,17 @@ public final class MHXXCharmAppTest {
     }
 
     private static void testComboContinueEstimate() {
-        equal(134, MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 1_500, 100, 717),
-                "target and measured baseline recommend 34 more Continue cycles with a safety margin");
-        equal(100, MHXXCharmApp.estimateComboContinueCount(74_500, 72_000, 1_500, 100, 717),
+        equal(136, MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 100, 717),
+                "target and measured baseline recommend more Continue cycles with a timing margin");
+        equal(100, MHXXCharmApp.estimateComboContinueCount(74_500, 72_000, 100, 717),
                 "short code2 wait needs no new code1 run");
-        equal(97, MHXXCharmApp.estimateComboContinueCount(73_000, 72_000, 1_500, 100, 717),
-                "overshot target recommends fewer Continue cycles");
-        expectInvalid(() -> MHXXCharmApp.estimateComboContinueCount(73_000, 72_000, 1_500, 0, 714),
+        equal(97, MHXXCharmApp.estimateComboContinueCount(72_500, 72_000, 100, 717),
+                "too little time to deposit recommends fewer Continue cycles");
+        expectInvalid(() -> MHXXCharmApp.estimateComboContinueCount(71_999, 72_000, 0, 714),
                 "a target before the zero-Continue baseline is rejected");
-        expectInvalid(() -> MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 1_500, 100, 0),
+        expectInvalid(() -> MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 100, 0),
                 "zero consumption rate is rejected");
-        expectInvalid(() -> MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 1_500, 100, Double.NaN),
+        expectInvalid(() -> MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 100, Double.NaN),
                 "invalid consumption rate is rejected");
     }
 
@@ -335,16 +349,22 @@ public final class MHXXCharmAppTest {
                 "short target does not produce negative Continue count");
         expectInvalid(() -> MHXXCharmApp.estimateInitialComboContinueCount(0),
                 "nonpositive target is rejected");
-        equal(283_333L, MHXXCharmApp.calculateComboWaitMs(100_000, 90_000, 1_500),
-                "remaining frames become code2 wait after measured offset");
-        equal(0L, MHXXCharmApp.calculateComboWaitMs(91_500, 90_000, 1_500),
-                "exact measured target needs no extra wait");
-        expectInvalid(() -> MHXXCharmApp.calculateComboWaitMs(91_499, 90_000, 1_500),
-                "target before measured deposit frame is rejected");
-        expectInvalid(() -> MHXXCharmApp.calculateComboWaitMs(100_000, 90_000, 0),
-                "unmeasured offset is rejected");
-        expectInvalid(() -> MHXXCharmApp.calculateComboWaitMs(200_000_000, 1, 1),
-                "wait exceeding Arduino unsigned long is rejected");
+        equal(323_483L, MHXXCharmApp.calculateComboResumeDeadlineMs(100_000, 90_000, 0),
+                "first attempt uses the fixed craft-to-HOME time without calibration");
+        equal(320_150L, MHXXCharmApp.calculateComboResumeDeadlineMs(100_000, 90_000, 100),
+                "positive correction advances a late deposit by 100 frames");
+        equal(15_150L, MHXXCharmApp.calculateComboResumeDeadlineMs(90_750, 90_000, 0),
+                "the minimum lead leaves time to reach the confirmation dialog");
+        expectInvalid(() -> MHXXCharmApp.calculateComboResumeDeadlineMs(90_745, 90_000, 0),
+                "just under the minimum lead is rejected");
+        expectInvalid(() -> MHXXCharmApp.calculateComboResumeDeadlineMs(90_600, 90_000, 0),
+                "too little time for code2 navigation is rejected");
+        expectInvalid(() -> MHXXCharmApp.calculateComboResumeDeadlineMs(89_999, 90_000, 0),
+                "target before crafting frame is rejected");
+        expectInvalid(() -> MHXXCharmApp.calculateComboResumeDeadlineMs(90_000, 91_000, -10_000),
+                "negative correction cannot make a past target reachable");
+        expectInvalid(() -> MHXXCharmApp.calculateComboResumeDeadlineMs(200_000_000, 1, 0),
+                "deadline exceeding Arduino unsigned long is rejected");
     }
 
     private static void expectInvalid(Runnable action, String message) {

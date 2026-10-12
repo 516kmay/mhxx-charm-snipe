@@ -1053,9 +1053,10 @@ public class MHXXCharmApp extends JFrame {
     JTextField comboMysetRecallDownField; // マイセット画面で呼び出しまで下がる回数
     JTextField comboMysetSlotField;      // 使用するマイセット番号
     JTextField comboMysetConfirmField;   // 呼び出し確認のA回数
-    JTextField comboArdCurrentFField;  // search_combo相当の調合基準F
+    JTextField comboArdCurrentFField;  // search_combo相当の調合開始F
     JTextField comboArdTargetFField;   // 調合Arduinoタブの「目標F」（調合スナイプの目標Fと連動）
-    JTextField comboOffsetField;       // 調合基準F→待機0のコード2投入確定までの実測フレーム
+    JTextField comboTimingAdjustField; // 初回不要。実機の着弾ズレを累積補正する
+    String comboLegacyOffset;          // 旧実測値は計算に使わず設定ファイル内だけ保持する
     DefaultTableModel rewardModel;
     JTable rewardTable;
     JLabel rewardCalcResult;
@@ -1211,7 +1212,8 @@ public class MHXXCharmApp extends JFrame {
             if (comboMysetConfirmField != null) props.setProperty("combo.code3.confirm", comboMysetConfirmField.getText());
             if (comboArdCurrentFField != null) props.setProperty("combo.ardCurrentF", comboArdCurrentFField.getText());
             if (comboArdTargetFField != null) props.setProperty("combo.ardTargetF", comboArdTargetFField.getText());
-            if (comboOffsetField != null) props.setProperty("combo.offset.roomService.v2", comboOffsetField.getText());
+            if (comboTimingAdjustField != null) props.setProperty("combo.timingAdjust.v3", comboTimingAdjustField.getText());
+            if (comboLegacyOffset != null) props.setProperty("combo.offset.roomService.v2", comboLegacyOffset);
 
             // 待機時間の補正
             if (adjTargetField != null) props.setProperty("adj.target", adjTargetField.getText());
@@ -1302,9 +1304,9 @@ public class MHXXCharmApp extends JFrame {
             if (comboArdCurrentFField != null && !savedArdCurrent.isEmpty()) comboArdCurrentFField.setText(savedArdCurrent);
             String savedArdTarget = props.getProperty("combo.ardTargetF", "");
             if (comboArdTargetFField != null && !savedArdTarget.isEmpty()) comboArdTargetFField.setText(savedArdTarget);
-            // 旧コード2は村へ移動して確認画面で待っていたため、旧オフセットは再利用しない。
-            String savedOffset = props.getProperty("combo.offset.roomService.v2", "");
-            if (comboOffsetField != null && !savedOffset.isEmpty()) comboOffsetField.setText(savedOffset);
+            // 旧オフセットは待機位置と意味が違うため、新方式の補正値として再利用しない。
+            comboLegacyOffset = props.getProperty("combo.offset.roomService.v2");
+            if (comboTimingAdjustField != null) comboTimingAdjustField.setText(props.getProperty("combo.timingAdjust.v3", "0"));
 
             // 待機時間の補正
             String savedAdjTarget = props.getProperty("adj.target", "");
@@ -1838,7 +1840,7 @@ public class MHXXCharmApp extends JFrame {
             case "有名お守り" -> exportCSV(famousModel,
                     new String[]{"フレーム","第1スキル","SP1","第2スキル","SP2","スロット","待ち時間","当たりF範囲","種類"});
             case "調合スナイプ" -> exportCSV(comboModel,
-                    new String[]{"調合基準F","経過時間","一致数"});
+                    new String[]{"調合開始F","経過時間","一致数"});
             case "報酬逆算" -> exportCSV(rewardModel,
                     new String[]{"報酬生成前F","現在F(生成後)","報酬(通常+追加)","追加枠数","現在Fの時刻","鑑定お守り(クエスト産)"});
             default -> {
@@ -3617,7 +3619,7 @@ public class MHXXCharmApp extends JFrame {
         row1.setOpaque(false);
         row1.add(label("待機時間 (ms):"));
         cdWaitMs = makeField("", 10);
-        cdWaitMs.setToolTipText("調合スナイプタブで計算した wait_ms をコピペ");
+        cdWaitMs.setToolTipText("調合スナイプの目標Fとの差分などを手動カウントダウンに設定");
         row1.add(cdWaitMs);
         panel.add(row1);
 
@@ -4639,9 +4641,9 @@ public class MHXXCharmApp extends JFrame {
         sb.append("//   9. HOMEボタンでゲーム中断\n");
         sb.append("//\n");
         sb.append("// ここでArduinoを外し、録画を確認して累積弾数をツールに入力。\n");
-        sb.append("// 調合基準Fを逆算し、実測オフセットを使ってコード2を生成する。\n");
+        sb.append("// 調合開始Fを逆算し、目標Fからコード2の投入時刻を計算する。\n");
         if (numContinue >= 7500) {
-            sb.append("// 注意: Continue 7500回以上では線形の消費Fから大きくずれる実機例あり。録画から調合基準Fを必ず再特定する。\n");
+            sb.append("// 注意: Continue 7500回以上では線形の消費Fから大きくずれる実機例あり。録画から調合開始Fを必ず再特定する。\n");
         }
         sb.append("// ================================================================\n");
         sb.append("#include <NintendoSwitchControlLibrary.h>\n\n");
@@ -4751,78 +4753,52 @@ public class MHXXCharmApp extends JFrame {
 
     /**
      * 調合スナイプ用コード2を生成。
-     * HOME復帰→待機→ルームサービス経由でマカ錬金→ケルビマラソン→鑑定。
-     * @param waitMs 自宅のアイテムボックス前で待機する時間(ms)
+     * HOME復帰→ルームサービス経由で投入確認→目標時刻まで待機→確定→鑑定。
+     * @param resumeDeadlineMs HOME復帰から錬金確定までの目標経過時間(ms)
      */
-    static String generateComboCode2(long waitMs) {
-        return generateComboCode2(waitMs, -1);
-    }
-
-    /**
-     * 調合スナイプ用コード2を生成（オフセット情報付き）。
-     * @param waitMs 自宅のアイテムボックス前で待機する時間(ms)
-     * @param offsetFrames キャリブレーションで実測した調合基準F→待機0の乱数決定までのフレーム数
-     */
-    static String generateComboCode2(long waitMs, long offsetFrames) {
-        return generateComboCode2(waitMs, offsetFrames, false);
-    }
-
-    static String generateComboCode2(long waitMs, long offsetFrames, boolean pairController) {
-        if (waitMs < 0 || waitMs > 0xffff_ffffL || offsetFrames < -1) {
-            throw new IllegalArgumentException("コード2の待機は0〜4294967295ms、オフセットは-1以上にしてください");
+    static String generateComboCode2(long resumeDeadlineMs, boolean pairController) {
+        if (resumeDeadlineMs < COMBO_MIN_RESUME_MS || resumeDeadlineMs > 0xffff_ffffL) {
+            throw new IllegalArgumentException("復帰から投入までの時間が短すぎるか、Arduinoの32bit msを超えます");
         }
         StringBuilder sb = new StringBuilder();
         sb.append("// ================================================================\n");
-        sb.append("// MHXX 調合スナイプ - コード2 (ゲーム復帰 + 待機 + マカ錬金)\n");
+        sb.append("// MHXX 調合スナイプ - コード2 (ゲーム復帰 + 目標時刻にマカ錬金)\n");
         sb.append("// ================================================================\n");
         sb.append("// 実行前提:\n");
         sb.append("//   - コード1実行後、HOMEでゲーム中断した状態\n");
-        sb.append("//   - 録画から累積弾数を読み取り、調合基準Fを逆算済み\n");
-        sb.append("//   - Switchの自動スリープを無効化しておく（待機中はボタンを押さない）\n");
+        sb.append("//   - 録画から累積弾数を読み取り、調合開始Fを逆算済み\n");
+        sb.append("//   - Switchの自動スリープを無効化しておく\n");
         if (pairController) {
             sb.append("//   - 実行前にHOME→コントローラー→持ち方/順番を変えるを開いておく\n");
         }
-        if (offsetFrames > 0) {
-            long offsetMs = Math.round(offsetFrames / 30.0 * 1000);
-            sb.append("//   - wait_ms は自宅アイテムボックス前の追加待機時間 (ms)\n");
-            sb.append("//     概算式: wait_ms = (目標投入F - 調合基準F - オフセットF) / 30 * 1000\n");
-            sb.append("//     オフセットは調合基準Fから待機0の錬金確定まで実測する\n");
-            sb.append("//     実機では自宅待機中の追加消費が変動するため、長い待機は短時間の実測だけで確定させない\n");
-            sb.append("//     オフセット適用済み: %d フレーム (約 %d ms)\n".formatted(offsetFrames, offsetMs));
-        } else {
-            sb.append("//   - wait_ms = 0 の場合はオフセット測定用。実測後に再生成する\n");
-        }
+        sb.append("//   - 目標投入Fと調合開始Fの差から調合→HOMEの約9.85秒を引いた時刻が投入目安\n");
+        sb.append("//   - 移動とメニュー操作もタイマーに含む。実機差・長時間の追加消費は着弾後に補正\n");
         sb.append("//\n");
         sb.append("// 動作:\n");
         sb.append("//   1. HOMEボタンでゲーム復帰（自宅にいる状態）\n");
-        sb.append("//   2. アイテムボックス前で設定時間だけ待機\n");
-        sb.append("//   3. ルームサービス（アイシャ）前まで歩く\n");
-        sb.append("//   4. ルームサービス経由でマカ錬金、護石3個選択\n");
-        sb.append("//   5. A連打で投入確定（このタイミングで乱数決定）\n");
-        sb.append("//   6. 村へ戻る\n");
-        sb.append("//   7. 受付嬢にダッシュ → ケルビ納品クエスト\n");
-        sb.append("//   8. クエスト出発・納品・報酬売却\n");
-        sb.append("//   9. 自宅で鑑定確認\n");
+        sb.append("//   2. ルームサービス（アイシャ）前まで歩く\n");
+        sb.append("//   3. マカ錬金で護石3個を選び、確認画面まで進める\n");
+        sb.append("//   4. HOME復帰から目標時刻まで待ち、Aで投入確定\n");
+        sb.append("//   5. 村へ戻る\n");
+        sb.append("//   6. 受付嬢にダッシュ → ケルビ納品クエスト\n");
+        sb.append("//   7. クエスト出発・納品・報酬売却\n");
+        sb.append("//   8. 自宅で鑑定確認\n");
         sb.append("// ================================================================\n");
         sb.append("#include <NintendoSwitchControlLibrary.h>\n\n");
 
-        sb.append("unsigned long wait_ms = ").append(waitMs).append(";\n\n");
+        sb.append("unsigned long target_elapsed_ms = ").append(resumeDeadlineMs).append(";\n\n");
 
         sb.append("void setup() {\n");
         sb.append("    delay(50);\n\n");
 
-        appendComboResumeFromHome(sb, pairController);
+        appendComboResumeFromHome(sb, pairController, true);
 
-        // Step 2: 自宅で待機。メニューが開くXボタン等を送らない。
-        sb.append("    // Step 2: アイテムボックス前で待機（自動スリープを無効にする）\n");
-        sb.append("    delay(wait_ms);\n\n");
-
-        // Step 3: ルームサービスへ歩く（記事記載の座標）
-        sb.append("    // Step 3: ルームサービス（アイシャ）の前へ歩く\n");
+        // Step 2: ルームサービスへ歩く（記事記載の座標）
+        sb.append("    // Step 2: ルームサービス（アイシャ）の前へ歩く\n");
         sb.append("    tiltLeftStick(Stick::MAX, 190, 2500);\n\n");
 
-        // Step 4: ルームサービス経由でマカ錬金
-        sb.append("    // Step 4: ルームサービスに話しかけ、マカ錬金を選択\n");
+        // Step 3: ルームサービス経由でマカ錬金
+        sb.append("    // Step 3: ルームサービスに話しかけ、マカ錬金を選択\n");
         sb.append("    // メニュー位置は進行状況・設定により異なるため実機で要確認\n");
         sb.append("    pushButton(Button::A, 250, 2);\n");
         sb.append("    pushButton(Button::B, 250, 2);\n");
@@ -4842,16 +4818,17 @@ public class MHXXCharmApp extends JFrame {
         sb.append("    pushButton(Button::A, 10);    // 3番目の護石（→ 投入確認ダイアログ）\n");
         sb.append("    delay(1000);                    // ダイアログ表示の安定待ち\n\n");
 
-        // Step 5: A連打で投入確定
-        sb.append("    // Step 5: A連打で投入確定（このタイミングで乱数決定）\n");
+        // Step 4: ダイアログで目標時刻まで待ってから投入確定する。
+        sb.append("    // Step 4: 移動・メニュー時間を含めた時刻で投入確定\n");
+        sb.append("    while ((unsigned long)(millis() - resume_started_ms) < target_elapsed_ms) delay(1);\n");
         sb.append("    pushButton(Button::A, 100, 2);\n");
         sb.append("    pushButton(Button::B, 100, 5);\n");
         sb.append("    pushButton(Button::X, 250);     // 自宅から村へ戻る\n");
         sb.append("    pushButton(Button::A, 250, 2);\n");
         sb.append("    delay(2000);\n\n");
 
-        // Step 7: 受付嬢へダッシュ → ケルビクエスト
-        sb.append("    // Step 7: 受付嬢へダッシュ → ケルビ納品クエスト\n");
+        // Step 6: 受付嬢へダッシュ → ケルビクエスト
+        sb.append("    // Step 6: 受付嬢へダッシュ → ケルビ納品クエスト\n");
         sb.append("    SwitchControlLibrary().pressButton(Button::R);\n");
         sb.append("    SwitchControlLibrary().sendReport();\n");
         sb.append("    tiltLeftStick(Stick::MAX, Stick::MIN, 1500);\n");
@@ -4868,8 +4845,8 @@ public class MHXXCharmApp extends JFrame {
         sb.append("    pushButton(Button::A, 50, 5); // 受注\n");
         sb.append("    pushButton(Button::B, 250, 4);\n\n");
 
-        // Step 8: クエスト出発・納品・報酬
-        sb.append("    // Step 8: クエスト出発\n");
+        // Step 7: クエスト出発・納品・報酬
+        sb.append("    // Step 7: クエスト出発\n");
         sb.append("    SwitchControlLibrary().pressButton(Button::R);\n");
         sb.append("    SwitchControlLibrary().sendReport();\n");
         sb.append("    tiltLeftStick(Stick::MIN, Stick::NEUTRAL, 800);\n");
@@ -4897,8 +4874,8 @@ public class MHXXCharmApp extends JFrame {
         sb.append("    pushButton(Button::A, 250);\n");
         sb.append("    delay(7900);\n\n");
 
-        // Step 9: 自宅で鑑定
-        sb.append("    // Step 9: 自宅で鑑定\n");
+        // Step 8: 自宅で鑑定
+        sb.append("    // Step 8: 自宅で鑑定\n");
         sb.append("    pushButton(Button::X, 250);\n");
         sb.append("    pushButton(Button::A, 250, 2);\n");
         sb.append("    delay(2000);\n");
@@ -4918,7 +4895,8 @@ public class MHXXCharmApp extends JFrame {
     }
 
     /** HOME中断中から復帰する。再接続が必要な場合は先にSwitchの接続画面を開く。 */
-    private static void appendComboResumeFromHome(StringBuilder sb, boolean pairController) {
+    private static void appendComboResumeFromHome(StringBuilder sb, boolean pairController,
+                                                   boolean trackResume) {
         if (pairController) {
             sb.append("    // 接続が外れた場合: 持ち方/順番を変える画面でL+Rを同時入力\n");
             sb.append("    SwitchControlLibrary().pressButton(Button::L);\n");
@@ -4932,6 +4910,7 @@ public class MHXXCharmApp extends JFrame {
             sb.append("    pushButton(Button::A, 250); // 接続確定→HOMEに戻る\n\n");
         }
         sb.append("    // HOMEでゲーム復帰（自宅のアイテムボックス前）\n");
+        if (trackResume) sb.append("    unsigned long resume_started_ms = millis();\n");
         sb.append("    pushButton(Button::HOME, 500);\n");
         sb.append("    delay(500); // ゲーム復帰待ち\n\n");
     }
@@ -4959,14 +4938,14 @@ public class MHXXCharmApp extends JFrame {
         if (pairController) {
             sb.append("//   - 実行前にHOME→コントローラー→持ち方/順番を変えるを開く\n");
         }
-        sb.append("// 実行後は新しい録画から調合基準Fを再特定し、コード2の待機を再計算。\n");
-        sb.append("// 旧調合基準Fやコード2のwait_msはそのまま使わない。\n");
+        sb.append("// 実行後は新しい録画から調合開始Fを再特定し、コード2の投入時刻を再計算。\n");
+        sb.append("// 旧調合開始Fやコード2の時刻はそのまま使わない。\n");
         sb.append("// ================================================================\n");
         sb.append("#include <NintendoSwitchControlLibrary.h>\n\n");
         sb.append("unsigned long wait_ms = ").append(waitMs).append(";\n\n");
         sb.append("void setup() {\n");
         sb.append("    delay(50);\n\n");
-        appendComboResumeFromHome(sb, pairController);
+        appendComboResumeFromHome(sb, pairController, false);
         sb.append("    // アイテムボックス前で指定時間だけ待機\n");
         sb.append("    delay(wait_ms);\n\n");
         sb.append("    // アイテムマイセットで所持品を復元（カーソル位置は実機で確認）\n");
@@ -5412,7 +5391,7 @@ public class MHXXCharmApp extends JFrame {
         tab.setBackground(BG);
         tab.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
 
-        JPanel settings = titled("調合スナイプ（Lv2通常弾の個数列から「調合基準F」を特定）");
+        JPanel settings = titled("調合スナイプ（Lv2通常弾の個数列から「調合開始F」を特定）");
         settings.setLayout(new BoxLayout(settings, BoxLayout.Y_AXIS));
 
         // 説明
@@ -5422,9 +5401,9 @@ public class MHXXCharmApp extends JFrame {
             "<html><body style='width:800px; color:#8888aa;'>" +
             "<b>★ココット村でセーブ必須★</b>（ロード後は村スタート → コードが自宅へ移動します）<br>" +
             "ハリの実 + カラの実 を<b>各15個以上</b>用意し、調合書を持って自宅で<br>" +
-            "<b>Lv2通常弾を連続調合</b>。Switch録画で弾数の変化を記録し、<b>調合開始位置に調合による追加消費を加えた基準F</b>を逆算。<br>" +
+            "<b>Lv2通常弾を連続調合</b>。Switch録画で弾数の変化を記録し、<b>調合開始時の基準とするF</b>を逆算。<br>" +
             "前提: ルームサービス=モガの村の看板娘、ペット/オトモなし。<br>" +
-            "<b>使い方:</b> 周辺表示の投入候補Fを目標にし、調合基準Fとの差から以後の消費を差し引いて待機。<br>" +
+            "<b>使い方:</b> 周辺表示の投入候補Fを目標にし、調合開始Fとの差からコード1の時間を差し引いて投入。<br>" +
             "<b>入力形式:</b> 累積弾数（0始まり、例: <code>0 2 4 7 10 13 16</code>）<br>" +
             "　　 or 個数列（各回の調合数、例: <code>2,2,3,3,3,3</code>）— 自動判定します。" +
             "</body></html>");
@@ -5632,7 +5611,7 @@ public class MHXXCharmApp extends JFrame {
         comboTargetFField = makeField("", 12);
         comboTargetFField.setToolTipText(
             "<html><b>周辺表示の『投入F』（任意）</b>。お守り生成Fとは異なる場合があります。<br>" +
-            "入力すると<b>「調合基準Fから目標Fまでの参考差分」</b>を自動表示します。<br>" +
+            "入力すると<b>「調合開始Fから目標Fまでの参考差分」</b>を自動表示します。<br>" +
             "また、検索範囲を「開始Fから目標Fまで+10万」に自動設定し、<br>" +
             "候補ハイライト(目標F以下で最も近い候補を緑)にも使います。</html>");
         JPanel row2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
@@ -5732,12 +5711,12 @@ public class MHXXCharmApp extends JFrame {
 
         // 結果テーブル
         comboModel = new DefaultTableModel(
-                new String[]{"調合基準F","経過時間","一致数"}, 0);
+                new String[]{"調合開始F","経過時間","一致数"}, 0);
         JTable comboTable = makeTable(comboModel);
         comboTable.setToolTipText(
             "<html>ダブルクリック→周辺表示 / 右クリック→Arduino・カウントダウン連携<br>" +
-            "<b>調合基準F = 調合開始位置 + 調合による追加消費</b>（search_combo相当）<br>" +
-            "目標との差分は参考値。コード2では実測オフセットを差し引きます。</html>");
+            "<b>調合開始F = search_combo相当の補正を含む推定F</b><br>" +
+            "目標との差分は参考値。コード2では調合→HOMEの固定時間を差し引きます。</html>");
         comboTable.addMouseListener(new MouseAdapter() {
             @Override public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2) {
@@ -5767,7 +5746,7 @@ public class MHXXCharmApp extends JFrame {
                 long diff = target - current;
                 if (diff <= 0) {
                     JOptionPane.showMessageDialog(this,
-                            "目標Fは候補の調合基準Fより後に設定してください。",
+                            "目標Fは候補の調合開始Fより後に設定してください。",
                             "設定エラー", JOptionPane.ERROR_MESSAGE);
                     return;
                 }
@@ -5791,14 +5770,14 @@ public class MHXXCharmApp extends JFrame {
         JPanel rp = titled("候補フレーム（調合個数列が一致するフレーム）");
         rp.setLayout(new BorderLayout());
         rp.add(sp, BorderLayout.CENTER);
-        JButton sendToComboArduino = makeButton("選択した調合基準Fを調合Arduinoへ", BTN_BG);
+        JButton sendToComboArduino = makeButton("選択した調合開始Fを調合Arduinoへ", BTN_BG);
         sendToComboArduino.addActionListener(e -> {
             if (!transferSelectedComboFrame(comboTable, comboArdCurrentFField)) {
                 JOptionPane.showMessageDialog(tab, "先に候補行を選択してください。", "情報", JOptionPane.INFORMATION_MESSAGE);
                 return;
             }
             selectTab("調合Arduino");
-            statusLabel.setText("調合基準Fを調合Arduinoへ設定しました");
+            statusLabel.setText("調合開始Fを調合Arduinoへ設定しました");
         });
         JPanel transferRow = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 2));
         transferRow.setOpaque(false);
@@ -5915,7 +5894,7 @@ public class MHXXCharmApp extends JFrame {
                 SwingUtilities.invokeLater(() -> {
                     for (ComboSearchResult rs : results) {
                         long startFrame = rs.frame();
-                        // 列構成: 調合基準F / 経過時間 / 一致数
+                        // 列構成: 調合開始F / 経過時間 / 一致数
                         comboModel.addRow(new Object[]{
                             startFrame, framesToTime(startFrame), rs.matchCount()
                         });
@@ -5995,22 +5974,22 @@ public class MHXXCharmApp extends JFrame {
                         if (fTargetF != null && fTargetF >= candidateStartF) {
                             long waitFrames = fTargetF - candidateStartF;
                             summaryLabel.setText(String.format(
-                                "<html><b>調合基準F: %,d</b> &nbsp;|&nbsp; 目標Fまでの参考差分: <b>%,d F</b> = <b>%s</b>（実待機は消費分を差し引く）</html>",
+                                "<html><b>調合開始F: %,d</b> &nbsp;|&nbsp; 目標Fまでの参考差分: <b>%,d F</b> = <b>%s</b>（実待機は操作時間を差し引く）</html>",
                                 candidateStartF, waitFrames, framesToTime(waitFrames)));
                         } else if (fTargetF != null) {
                             summaryLabel.setText(String.format(
-                                "<html><b>調合基準F: %,d</b> &nbsp;|&nbsp; <span style='color:#cc6666;'>目標F (%,d) は調合基準Fより前です</span></html>",
+                                "<html><b>調合開始F: %,d</b> &nbsp;|&nbsp; <span style='color:#cc6666;'>目標F (%,d) は調合開始Fより前です</span></html>",
                                 candidateStartF, fTargetF));
                         } else {
                             summaryLabel.setText(String.format(
-                                "<html><b>調合基準F: %,d</b> &nbsp;|&nbsp; 目標Fを入力すると参考差分を表示します</html>",
+                                "<html><b>調合開始F: %,d</b> &nbsp;|&nbsp; 目標Fを入力すると参考差分を表示します</html>",
                                 candidateStartF));
                         }
                         summaryLabel.setForeground(SUCCESS);
                     } else if (fBestCandidate != null) {
                         long waitFrames = fTargetF - fBestCandidate;
                         summaryLabel.setText(String.format(
-                            "<html>%d件の候補 — 推奨: <b>調合基準F %,d</b>(緑色行) &nbsp;|&nbsp; 目標 %,d Fまでの参考差分: <b>%,d F = %s</b><br>" +
+                            "<html>%d件の候補 — 推奨: <b>調合開始F %,d</b>(緑色行) &nbsp;|&nbsp; 目標 %,d Fまでの参考差分: <b>%,d F = %s</b><br>" +
                             "<span style='color:#cc8888;'>※複数候補がある時は偽マッチ含む可能性。観測数を増やすと絞り込めます</span></html>",
                             results.size(), fBestCandidate, fTargetF, waitFrames, framesToTime(waitFrames)));
                         summaryLabel.setForeground(SUCCESS);
@@ -6035,6 +6014,11 @@ public class MHXXCharmApp extends JFrame {
     // Combo Arduino Tab (調合スナイプ2コード方式)
     // ================================================================
     private static final double COMBO_CONTINUE_FRAMES = 717.0; // 500ms周期の実機例。調合で必ず再測定する。
+    // shortcut: search_combo補正Fを調合開始の時刻基準とみなす。実機差は着弾後に補正する。
+    // hold A 4100 + B×3 1150 + CAPTURE 1600 + 保存待ち 3000 = HOME押下まで9850ms。
+    private static final long COMBO_CRAFT_TO_HOME_MS = 9_850;
+    private static final long COMBO_MIN_RESUME_MS = 15_000; // 確認画面までの公称約10.46秒に実機用の余裕を持たせる。
+    private static final long COMBO_MIN_LEAD_FRAMES = 750; // 調合開始から投入まで最低25秒の余裕を残す。
 
     static boolean transferSelectedComboFrame(JTable table, JTextField destination) {
         int row = table.getSelectedRow();
@@ -6045,13 +6029,13 @@ public class MHXXCharmApp extends JFrame {
         return true;
     }
 
-    static int estimateComboContinueCount(long targetF, long currentF, long offsetF,
+    static int estimateComboContinueCount(long targetF, long currentF,
                                           int currentNc, double fc) {
-        if (targetF <= 0 || currentF < 0 || offsetF <= 0 || currentNc < 0
+        if (targetF <= 0 || currentF < 0 || currentNc < 0
                 || !Double.isFinite(fc) || fc <= 0) {
-            throw new IllegalArgumentException("目標F・調合基準F・オフセットF・実測fcを確認してください");
+            throw new IllegalArgumentException("目標F・調合開始F・Continue回数を確認してください");
         }
-        double remainingF = (double) targetF - currentF - offsetF;
+        double remainingF = (double) targetF - currentF - COMBO_MIN_LEAD_FRAMES;
         // shortcut: fcを線形近似し2回分の余裕を残す。長距離や手順変更時は録画から再測定する。
         double recommended = currentNc + Math.floor(remainingF / fc) - 2;
         if (remainingF > 0) recommended = Math.max(currentNc, recommended);
@@ -6069,16 +6053,25 @@ public class MHXXCharmApp extends JFrame {
         return (int) count;
     }
 
-    static long calculateComboWaitMs(long targetF, long currentF, long offsetF) {
-        if (targetF <= 0 || currentF < 0 || offsetF <= 0) {
-            throw new IllegalArgumentException("目標F・調合で測ったF・実測オフセットを確認してください");
+    static long calculateComboResumeDeadlineMs(long targetF, long currentF, long correctionF) {
+        if (targetF <= 0 || currentF < 0) {
+            throw new IllegalArgumentException("目標F・調合開始Fを確認してください");
         }
-        if (targetF <= currentF || targetF - currentF < offsetF) {
-            throw new IllegalArgumentException("目標Fが測定Fとオフセットの合計より前です");
+        if (targetF <= currentF) {
+            throw new IllegalArgumentException("目標Fは調合開始Fより後にしてください");
         }
-        long waitMs = Math.round((targetF - currentF - offsetF) / 30.0 * 1000);
-        if (waitMs > 0xffff_ffffL) throw new IllegalArgumentException("待機がArduinoの32bit msを超えます");
-        return waitMs;
+        long remainingF;
+        try {
+            remainingF = Math.subtractExact(targetF - currentF, correctionF);
+        } catch (ArithmeticException ex) {
+            throw new IllegalArgumentException("補正Fが大きすぎます", ex);
+        }
+        double deadline = remainingF / 30.0 * 1000 - COMBO_CRAFT_TO_HOME_MS;
+        if (deadline > 0xffff_ffffL) throw new IllegalArgumentException("待機がArduinoの32bit msを超えます");
+        if (deadline < COMBO_MIN_RESUME_MS) {
+            throw new IllegalArgumentException("目標Fが近すぎます。Continue回数を減らしてコード1をやり直してください");
+        }
+        return Math.round(deadline);
     }
 
     JPanel buildComboArduinoTab() {
@@ -6091,7 +6084,7 @@ public class MHXXCharmApp extends JFrame {
         top.setBackground(BG);
         top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
 
-        JPanel settings = titled("目標F → Continue → 調合で現在Fを確認 → 残りを待って投入");
+        JPanel settings = titled("目標F → Continue → 調合で現在Fを確認 → 目標時刻に投入");
         settings.setLayout(new BoxLayout(settings, BoxLayout.Y_AXIS));
 
         // 説明
@@ -6101,9 +6094,9 @@ public class MHXXCharmApp extends JFrame {
             "<html><body style='width:800px; color:#8888aa;'>" +
             "<b>ココット村でセーブしてから開始。</b> 周辺表示で錬金の投入候補Fを選びます。<br>" +
             "① Continue回数を概算してコード1を実行 → 調合を録画してHOMEで中断<br>" +
-            "② 調合スナイプで録画の弾数から現在Fを特定 → ここへ転送<br>" +
-            "③ 実測オフセットを引いた残り時間だけ待つコード2を実行 → マカ錬金へ投入<br>" +
-            "※ 初回のみ下の詳細設定でオフセットを校正。長い待機は予備コード3で再調合できます。" +
+            "② 調合スナイプで録画の弾数から調合開始Fを特定 → ここへ転送<br>" +
+            "③ コード2でルームサービスへ移動し、投入確認画面で目標時刻まで待って確定<br>" +
+            "※ 初回の校正は不要。実機でずれた場合だけ詳細設定の着弾補正Fを使います。" +
             "</body></html>"));
         settings.add(descRow);
 
@@ -6196,7 +6189,7 @@ public class MHXXCharmApp extends JFrame {
         // --- 調合から現在Fを特定 ---
         JPanel measureRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         measureRow.setOpaque(false);
-        JLabel measureLabel = new JLabel("2. 録画の調合結果から現在Fを特定");
+        JLabel measureLabel = new JLabel("2. 録画の調合結果から調合開始Fを特定");
         measureLabel.setFont(FONT_UI_BOLD);
         measureLabel.setForeground(ACCENT);
         measureRow.add(measureLabel);
@@ -6208,7 +6201,7 @@ public class MHXXCharmApp extends JFrame {
         // --- コード2パラメータ ---
         JPanel code2Header = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         code2Header.setOpaque(false);
-        JLabel c2Label = new JLabel("3. 残りを待ってマカ錬金へ投入");
+        JLabel c2Label = new JLabel("3. 投入時刻に合わせてマカ錬金");
         c2Label.setFont(FONT_UI_BOLD);
         c2Label.setForeground(ACCENT);
         code2Header.add(c2Label);
@@ -6216,19 +6209,20 @@ public class MHXXCharmApp extends JFrame {
 
         JPanel c2Row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
         c2Row.setOpaque(false);
-        c2Row.add(label("調合で測ったF:"));
+        c2Row.add(label("調合開始F:"));
         comboArdCurrentFField = makeField("", 10);
         JTextField comboCurrentFField = comboArdCurrentFField; // ローカル参照（既存コード互換）
         comboCurrentFField.setToolTipText(
             "<html>「調合スナイプ」タブの逆算結果（search_combo相当）を入力。<br>" +
-            "調合基準Fから錬金確定までの進行は実測オフセットに含めます。</html>");
+            "このFを調合開始時の基準として扱い、コード1の調合開始からHOMEまでの時間を差し引きます。</html>");
         c2Row.add(comboCurrentFField);
-        c2Row.add(label("  → 残り待機:"));
+        c2Row.add(label("  → 復帰から投入まで:"));
         JLabel comboWaitLabel = new JLabel("---");
         comboWaitLabel.setFont(FONT_LARGE);
         comboWaitLabel.setForeground(ACCENT);
+        comboWaitLabel.setToolTipText("HOME復帰から投入確定までの目標経過時間。移動・メニュー操作も含みます。");
         c2Row.add(comboWaitLabel);
-        JButton gen2Btn = makeButton("▶ 待機・投入コードを生成", ACCENT);
+        JButton gen2Btn = makeButton("▶ 目標時刻の投入コードを生成", ACCENT);
         comboGen2Btn = gen2Btn;  // Ctrl+Enter ショートカット用
         c2Row.add(gen2Btn);
         settings.add(c2Row);
@@ -6297,66 +6291,22 @@ public class MHXXCharmApp extends JFrame {
         code3Options.add(c3Help);
         detailsPanel.add(code3Options);
 
-        // --- オフセット行 ---
-        JPanel offsetRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
-        offsetRow.setOpaque(false);
-        offsetRow.add(label("オフセット:"));
-        comboOffsetField = makeField("", 8);
-        comboOffsetField.setToolTipText(
-            "<html>調合逆算の基準Fから、wait_ms=0のコード2で錬金確定するまでの実測フレーム差。<br>" +
-            "コード1の調合後経過とコード2の操作時間をまとめて含みます。<br>" +
-            "<b>コード1の手順・待機場所・接続方法を変えたら再測定してください。</b></html>");
-        offsetRow.add(comboOffsetField);
-        offsetRow.add(label("F"));
-        JLabel offsetMsLabel = new JLabel("(--- ms)");
-        offsetMsLabel.setForeground(new Color(0x88, 0x88, 0xaa));
-        offsetRow.add(offsetMsLabel);
+        // 実機で初回の着弾位置が分かったときだけ補正する。
+        JPanel adjustRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        adjustRow.setOpaque(false);
+        adjustRow.add(label("着弾補正F（任意）:"));
+        comboTimingAdjustField = makeField("0", 8);
+        comboTimingAdjustField.setToolTipText("次回補正F = 現在の補正F + 実測投入F − 目標F。実測投入Fは周辺表示で特定し、お守り生成Fをそのまま使わないでください。");
+        adjustRow.add(comboTimingAdjustField);
+        adjustRow.add(label("F  （次回は現値＋実測投入F−目標F。初回は0）"));
+        detailsPanel.add(adjustRow);
 
         JPanel safetyRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         safetyRow.setOpaque(false);
-        safetyRow.add(new JLabel("<html><span style='color:#ffcc77;'>待機Fの換算は概算。長時間は追加消費を実測して再調整。Switchの自動スリープをOFFにし、移動・メニュー位置も実機で確認。</span></html>"));
+        safetyRow.add(new JLabel("<html><span style='color:#ffcc77;'>30F/秒とコード1の固定操作時間からの概算です。初回の命中は保証できません。長時間の追加消費・移動・メニュー位置は実機で確認。</span></html>"));
         settings.add(safetyRow);
 
-        // --- キャリブレーション領域 ---
-        JPanel calPanel = titled("オフセットのキャリブレーション");
-        calPanel.setLayout(new BoxLayout(calPanel, BoxLayout.Y_AXIS));
-        calPanel.add(offsetRow);
-
-        JPanel calDesc = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
-        calDesc.setOpaque(false);
-        calDesc.add(new JLabel(
-            "<html><body style='width:800px; color:#8888aa;'>" +
-            "<b>手順:</b><br>" +
-            "① 本番と同じ設定の「コード1」を実行→ 録画から上の「調合基準F」を逆算<br>" +
-            "② 下の「測定用コード生成」で <code>wait_ms = 0</code> のコード2を生成→Arduinoに書き込み→実行<br>" +
-            "③ 鑑定で出たお守りの生成Fを検索し、周辺表示で使用方式・投入ptの投入候補Fを確認<br>" +
-            "④ 実際の投入Fを入力 →「調合基準Fから逆算」でオフセットに反映。コード1を再実行し、新しい録画Fを転送<br>" +
-            "<span style='color:#ffcc77;'>候補が複数なら、他の鑑定お守りや操作時間で実際の投入Fを絞る。生成Fをそのまま入力しない。</span><br>" +
-            "<span style='color:#aaaaaa;'>※ オフセット = 実測投入F − 調合基準F。手順を変えたら再測定。</span>" +
-            "</body></html>"));
-        calPanel.add(calDesc);
-
-        JPanel calRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
-        calRow.setOpaque(false);
-        JButton calGenBtn = makeButton("▶ 測定用コード生成 (wait_ms=0)", GREEN);
-        calGenBtn.setToolTipText("オフセット測定用に wait_ms=0 のコード2を生成します");
-        calRow.add(calGenBtn);
-        calRow.add(label("   実測投入F:"));
-        JTextField calMeasuredField = makeField("", 10);
-        calMeasuredField.setToolTipText("周辺表示で実際に当たった錬金確定F。お守り生成Fと同一とは限りません。");
-        calRow.add(calMeasuredField);
-        JButton calApplyBtn = makeButton("調合基準Fから逆算してオフセット設定", ACCENT);
-        calApplyBtn.setToolTipText("オフセット = 実測投入F − 調合基準F で逆算します");
-        calRow.add(calApplyBtn);
-        JLabel calResultLabel = new JLabel("");
-        calResultLabel.setFont(FONT_LARGE);
-        calResultLabel.setForeground(SUCCESS);
-        calRow.add(calResultLabel);
-        calPanel.add(calRow);
-
-        detailsPanel.add(calPanel);
-
-        JCheckBox showDetailsCheck = new JCheckBox("実機設定・初回校正・予備コード3を表示", false);
+        JCheckBox showDetailsCheck = new JCheckBox("実機設定・着弾補正・予備コード3を表示", false);
         showDetailsCheck.setOpaque(false);
         showDetailsCheck.setForeground(FG);
         showDetailsCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -6435,15 +6385,14 @@ public class MHXXCharmApp extends JFrame {
             try {
                 long targetF = Long.parseLong(comboTargetFField.getText().trim());
                 boolean hasMeasurement = !comboNcField.getText().isBlank()
-                        && !comboCurrentFField.getText().isBlank() && !comboOffsetField.getText().isBlank();
+                        && !comboCurrentFField.getText().isBlank();
                 int nextNc = hasMeasurement
                         ? estimateComboContinueCount(targetF,
                                 Long.parseLong(comboCurrentFField.getText().trim()),
-                                Long.parseLong(comboOffsetField.getText().trim()),
                                 Integer.parseInt(comboNcField.getText().trim()), COMBO_CONTINUE_FRAMES)
                         : estimateInitialComboContinueCount(targetF);
                 if (comboNcField.getText().equals(String.valueOf(nextNc)) && hasMeasurement) {
-                    statusLabel.setText("追加Continueは不要です。調合で測ったFから残り待機を確認してください");
+                    statusLabel.setText("追加Continueは不要です。調合開始Fからコード2の投入時刻を確認してください");
                     return;
                 }
                 if (!comboNcField.getText().equals(String.valueOf(nextNc))) {
@@ -6454,7 +6403,7 @@ public class MHXXCharmApp extends JFrame {
                 statusLabel.setText(String.format("Continue %d回を概算（500ms周期の経験則）。コード1の録画で現在Fを必ず再特定してください", nextNc));
             } catch (IllegalArgumentException ex) {
                 JOptionPane.showMessageDialog(tab,
-                        "目標F・Continue回数・調合で測ったF・実測オフセットを確認してください: " + ex.getMessage(),
+                        "目標F・Continue回数・調合開始Fを確認してください: " + ex.getMessage(),
                         "概算できません", JOptionPane.ERROR_MESSAGE);
             }
         });
@@ -6479,20 +6428,20 @@ public class MHXXCharmApp extends JFrame {
             }
         });
 
-        // 待ち時間の自動計算
+        // HOME復帰から投入までの目標経過時間を自動計算
         Runnable updateWait = () -> {
             if (codeArea.getText().contains("#include <NintendoSwitchControlLibrary.h>")) {
-                codeArea.setText("// 目標F・測定F・オフセットが変わりました。コードを生成し直してください。");
+                codeArea.setText("// 目標F・調合開始F・着弾補正Fが変わりました。コードを生成し直してください。");
             }
             try {
                 long curF = Long.parseLong(comboCurrentFField.getText().trim());
                 long tgtF = Long.parseLong(comboTargetFField.getText().trim());
-                long offsetF = Long.parseLong(comboOffsetField.getText().trim());
-                long waitMs = calculateComboWaitMs(tgtF, curF, offsetF);
-                comboWaitLabel.setText(String.format("%,d ms (%.1f秒)", waitMs, waitMs / 1000.0));
+                long correctionF = Long.parseLong(comboTimingAdjustField.getText().trim());
+                long deadlineMs = calculateComboResumeDeadlineMs(tgtF, curF, correctionF);
+                comboWaitLabel.setText(String.format("%,d ms (%.1f秒)", deadlineMs, deadlineMs / 1000.0));
                 comboWaitLabel.setForeground(ACCENT);
             } catch (NumberFormatException ex) {
-                comboWaitLabel.setText(comboOffsetField.getText().isBlank() ? "オフセット要測定" : "測定F・目標Fを入力");
+                comboWaitLabel.setText("調合開始F・目標F・補正Fを入力");
                 comboWaitLabel.setForeground(WARN);
             } catch (IllegalArgumentException ex) {
                 comboWaitLabel.setText(ex.getMessage());
@@ -6510,83 +6459,28 @@ public class MHXXCharmApp extends JFrame {
             public void changedUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
         });
 
-        // オフセット変更時の処理（ms表示更新 + wait_ms再計算）
-        Runnable updateOffsetMs = () -> {
-            try {
-                long offsetF = Long.parseLong(comboOffsetField.getText().trim());
-                long offsetMs = Math.round(offsetF / 30.0 * 1000);
-                offsetMsLabel.setText(String.format("(約 %,d ms)", offsetMs));
-            } catch (NumberFormatException ex) {
-                offsetMsLabel.setText("(--- ms)");
-            }
-        };
-        comboOffsetField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
-            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateOffsetMs.run(); updateWait.run(); }
-            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateOffsetMs.run(); updateWait.run(); }
-            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateOffsetMs.run(); updateWait.run(); }
+        comboTimingAdjustField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { updateWait.run(); }
         });
-        updateOffsetMs.run(); // 初期表示
 
         // コード2生成
         gen2Btn.addActionListener(e -> {
             try {
                 long curF = Long.parseLong(comboCurrentFField.getText().trim());
                 long tgtF = Long.parseLong(comboTargetFField.getText().trim());
-                long offsetF = Long.parseLong(comboOffsetField.getText().trim());
-                if (offsetF <= 0) {
-                    if (!showDetailsCheck.isSelected()) showDetailsCheck.doClick();
-                    JOptionPane.showMessageDialog(tab, "先にオフセットを実測してください", "エラー", JOptionPane.ERROR_MESSAGE);
-                    return;
-                }
-                long waitMs = calculateComboWaitMs(tgtF, curF, offsetF);
-                String code = generateComboCode2(waitMs, offsetF, comboPairControllerCheck.isSelected());
+                long correctionF = Long.parseLong(comboTimingAdjustField.getText().trim());
+                long deadlineMs = calculateComboResumeDeadlineMs(tgtF, curF, correctionF);
+                String code = generateComboCode2(deadlineMs, comboPairControllerCheck.isSelected());
                 codeArea.setText(code);
                 codeArea.setCaretPosition(0);
-                statusLabel.setText(String.format("コード2を生成（オフセット %dF 適用、待機 %,d ms = %.1f秒）",
-                    offsetF, waitMs, waitMs / 1000.0));
+                statusLabel.setText(String.format("コード2を生成（復帰から投入まで %,d ms = %.1f秒、着弾補正 %+dF）",
+                    deadlineMs, deadlineMs / 1000.0, correctionF));
             } catch (IllegalArgumentException ex) {
-                if (comboOffsetField.getText().isBlank() && !showDetailsCheck.isSelected()) showDetailsCheck.doClick();
-                JOptionPane.showMessageDialog(tab, "調合で測ったF・目標F・オフセットを確認してください: " + ex.getMessage(), "エラー", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(tab, "調合開始F・目標F・着弾補正Fを確認してください: " + ex.getMessage(), "エラー", JOptionPane.ERROR_MESSAGE);
             }
         });
-
-        // 測定用コード生成（wait_ms = 0）
-        calGenBtn.addActionListener(e -> {
-            String code = generateComboCode2(0, -1, comboPairControllerCheck.isSelected());
-            codeArea.setText(code);
-            codeArea.setCaretPosition(0);
-            statusLabel.setText("オフセット測定用コード生成 (wait_ms=0) - 本番と同じ手順で実行してください");
-        });
-
-        // オフセットを設定（実測フレーム - 現在F で逆算）
-        calApplyBtn.addActionListener(e -> {
-            try {
-                long measured = Long.parseLong(calMeasuredField.getText().trim());
-                if (measured <= 0) {
-                    calResultLabel.setText("実測フレームは正の値を入力してください");
-                    calResultLabel.setForeground(WARN);
-                    return;
-                }
-                long curF = Long.parseLong(comboCurrentFField.getText().trim());
-                long offset = measured - curF;
-                if (offset <= 0) {
-                    calResultLabel.setText(String.format("実測 %,d ≤ 調合基準F %,d → オフセット負値で矛盾", measured, curF));
-                    calResultLabel.setForeground(WARN);
-                    return;
-                }
-                comboOffsetField.setText(String.valueOf(offset));
-                long offsetMs = Math.round(offset / 30.0 * 1000);
-                calResultLabel.setText(String.format("オフセット = %,d − %,d = %,d F (約 %,d ms)",
-                    measured, curF, offset, offsetMs));
-                calResultLabel.setForeground(SUCCESS);
-                comboCurrentFField.setText(""); // 校正用の錬金は終了済み。次回の録画Fが必要。
-                statusLabel.setText(String.format("校正完了: オフセット %,dF。コード1を再実行し、新しい録画で現在Fを特定してください", offset));
-            } catch (NumberFormatException ex) {
-                calResultLabel.setText("実測フレームと調合基準Fに数値を入力してください");
-                calResultLabel.setForeground(WARN);
-            }
-        });
-        calMeasuredField.addActionListener(calApplyBtn.getActionListeners()[0]);
 
         // クリップボードにコピー
         copyBtn.addActionListener(e -> {
@@ -6694,7 +6588,7 @@ public class MHXXCharmApp extends JFrame {
     }
 
     /**
-     * 調合の累積個数列からsearch_combo相当の「調合基準F」を逆算する。
+     * 調合の累積個数列からsearch_combo相当の「調合開始時の基準F」を逆算する。
      *
      * 仕様:
      *   - 累積列の先頭3つはカット（初期挙動が不安定なため）
@@ -6704,12 +6598,12 @@ public class MHXXCharmApp extends JFrame {
      *     - 5*3 = カットした3回分
      *     - 15  = 初回調合の遅延
      *     - 2*(N-1) = 各調合による進行2の補正
-     *   - 返り値 = startFrame + j （調合開始位置に調合による追加消費を加えた値）
+     *   - 返り値 = startFrame + j （調合開始位置に調合による追加消費を補正した値）
      *
      * @param cumulativeCounts 累積個数列（0始まり、例: [0, 2, 4, 7, 10, 13, ...]）
      * @param maxFrames 検索範囲
      * @param cancel キャンセルフラグ（nullable）
-     * @return 一致する候補の調合基準Fリスト
+     * @return 一致する候補の調合開始時の基準Fリスト
      */
     public static List<Long> reverseSearchCombo(int[] cumulativeCounts, long maxFrames,
             java.util.concurrent.atomic.AtomicBoolean cancel) {
@@ -6730,7 +6624,7 @@ public class MHXXCharmApp extends JFrame {
     public record ComboSearchResult(long frame, int matchCount) {}
 
     /**
-     * 調合の累積個数列から「調合終了直後のフレーム位置」を逆算する (前方部分一致対応版).
+     * 調合の累積個数列から「調合開始時の基準F」を逆算する (前方部分一致対応版).
      *
      * @param cumulativeCounts 累積個数列（0始まり）
      * @param maxFrames 検索範囲
@@ -6792,7 +6686,7 @@ public class MHXXCharmApp extends JFrame {
         //   - 5*3   : 先頭3つカット (1要素 = stride 5F)
         //   - 15    : 初回調合の遅延
         //   - 2*(rawLen-1) : 各調合 (rawLen-1回分) の進行2の補正
-        // ※search_combo相当の調合基準Fを返す（純粋な開始位置ではない）
+        // ※search_combo相当の補正済み基準Fを返す（純粋な開始位置ではない）
         final int correction = -5 * 3 - 15 + 2 * (rawLen - 1);
 
         int nThreads = Math.max(1, Runtime.getRuntime().availableProcessors());
