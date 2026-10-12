@@ -4702,14 +4702,18 @@ public class MHXXCharmApp extends JFrame {
             sb.append("    // 原典は移動座標と手順のみ。置く・再入室の位置と待ち時間は実機で確認\n");
             sb.append("    tiltLeftStick(Stick::MIN, 10, 1100);\n");
             sb.append("    pushButton(Button::A, 250);       // ペットのメニューを開く\n");
-            sb.append("    pushHat(Hat::DOWN, 100);          // 下1回で「抱く」を選択\n");
+            sb.append("    delay(3000);                     // 反応を待つ（3秒）\n");
+            sb.append("    pushButton(Button::A, 250);\n");
+            sb.append("    pushHat(Hat::DOWN, 250);          // 下1回で「抱く」を選択\n");
             sb.append("    pushButton(Button::A, 250);       // 抱くを決定\n");
             sb.append("    tiltLeftStick(Stick::MAX, Stick::MAX, 2000);\n");
             sb.append("    pushButton(Button::A, 250);       // 自宅から出る\n");
             sb.append("    delay(2000);\n");
             sb.append("    pushButton(Button::A, 250);       // ペットを置く\n");
-            sb.append("    pushButton(Button::A, 250);       // 自宅に戻る\n");
-            sb.append("    delay(2000);\n\n");
+            sb.append("    pushButton(Button::L, 100, 5);\n");
+            sb.append("    pushButton(Button::X, 250);\n");
+            sb.append("    pushButton(Button::A, 250, 2);\n");
+            sb.append("    delay(3000); // 自宅へのロード待ち\n\n");
         }
         sb.append("    // ルームサービスが画面外になるアイテムボックス前へ移動\n");
         sb.append("    tiltLeftStick(Stick::MIN, 10, 2000);\n\n");
@@ -6261,7 +6265,7 @@ public class MHXXCharmApp extends JFrame {
         c1Options.add(comboPreLoadWaitField);
         c1Options.add(label("ms"));
         comboRemovePoogieCheck = new JCheckBox("自宅のプーギーを屋外へ出す", false);
-        comboRemovePoogieCheck.setToolTipText("ペットがいる時だけ選択。A→下1回→Aで抱き、プーギーへ向かった左上とは逆の右下方向へ戻って退出。置く・再入室の位置と待ち時間は実機で確認してください。");
+        comboRemovePoogieCheck.setToolTipText("ペットがいる時だけ選択。A→3秒待機→A→下1回→Aで抱く。屋外に置いた後はL×5→X→A×2→3秒待機で自宅へ戻ります。実機で動作を確認してください。");
         comboRemovePoogieCheck.setOpaque(false);
         comboRemovePoogieCheck.setForeground(FG);
         c1Options.add(comboRemovePoogieCheck);

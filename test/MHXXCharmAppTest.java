@@ -233,14 +233,21 @@ public final class MHXXCharmAppTest {
         check(code1.contains("tiltLeftStick(Stick::MAX, Stick::MAX, 2000);"), "code1 carries Poogie outside");
         String petOperations = code1.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ");
         check(petOperations.contains("tiltLeftStick(Stick::MIN, 10, 1100); "
-                        + "pushButton(Button::A, 250); pushHat(Hat::DOWN, 100); "
+                        + "pushButton(Button::A, 250); delay(3000); "
+                        + "pushButton(Button::A, 250); pushHat(Hat::DOWN, 250); "
                         + "pushButton(Button::A, 250); tiltLeftStick(Stick::MAX, Stick::MAX, 2000);"),
-                "code1 opens the pet menu, selects Hold with one DOWN, and confirms before carrying");
+                "code1 waits for Poogie to react, opens the menu with a second A, then selects and confirms Hold");
         check(petOperations.contains("tiltLeftStick(Stick::MAX, Stick::MAX, 2000); "
                         + "pushButton(Button::A, 250); delay(2000);"),
                 "code1 returns toward the entrance then exits without turning back toward Poogie");
         check(!code1.contains("tiltLeftStick(Stick::MIN, Stick::MIN, 100);"),
                 "code1 does not add an unsupported turn back toward Poogie");
+        check(petOperations.contains("tiltLeftStick(Stick::MAX, Stick::MAX, 2000); "
+                        + "pushButton(Button::A, 250); delay(2000); pushButton(Button::A, 250); "
+                        + "pushButton(Button::L, 100, 5); pushButton(Button::X, 250); "
+                        + "pushButton(Button::A, 250, 2); delay(3000); "
+                        + "tiltLeftStick(Stick::MIN, 10, 2000);"),
+                "code1 places Poogie, returns home via L5-X-A2, and waits three seconds before walking to the box");
         check(code1.indexOf("tiltLeftStick(Stick::MIN, 10, 2000);") < code1.indexOf("pushButton(Button::PLUS, 500);"),
                 "code1 moves to item box before crafting");
         check(code1.contains("holdButton(Button::A, 4000);"), "code1 four-second craft");
