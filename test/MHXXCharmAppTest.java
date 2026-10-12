@@ -11,6 +11,7 @@ public final class MHXXCharmAppTest {
         testKnownCharmAndRangeSearch();
         testMeldingAimFramesByRecipeAndRank();
         testMeldingRankFromInputPoints();
+        testFamousCharmsMatchRng();
         testSecondSkillNormalization();
         testComboReverseSearchAndStartFrame();
         testComboSketchGeneration();
@@ -100,6 +101,36 @@ public final class MHXXCharmAppTest {
         equal(4, MHXXCharmApp.meldingRank(false, 9), "Juju 9 points");
         expectInvalid(() -> MHXXCharmApp.meldingRank(false, 2), "too few input points rejected");
         expectInvalid(() -> MHXXCharmApp.meldingRank(true, 10), "too many input points rejected");
+    }
+
+    private static void testFamousCharmsMatchRng() {
+        StringBuilder mismatches = new StringBuilder();
+        for (Object[] row : MHXXCharmApp.FAMOUS_CHARMS) {
+            long frame = (Long)row[0];
+            CharmData data = new CharmData();
+            String kind = (String)row[8];
+            if (kind.contains("古びた")) data.setRed();
+            else if (kind.contains("光る")) data.setYellow();
+            else data.setBlue();
+            MHXXCharmApp.RNG rng = new MHXXCharmApp.RNG();
+            rng.jump(frame);
+            MHXXCharmApp.Charm charm = MHXXCharmApp.getCharm(rng, data, 0);
+            if (!row[1].equals(charm.s1Name()) || !row[2].equals(charm.sp1())
+                    || !row[3].equals(charm.s2Name()) || !row[4].equals(charm.sp2())
+                    || !row[5].equals(charm.slot())) {
+                mismatches.append(frame).append(": expected ").append(row[1]).append(row[2])
+                        .append(" ").append(row[3]).append(row[4]).append(" S").append(row[5])
+                        .append(", actual ").append(charm).append('\n');
+            }
+            int aimCount = MHXXCharmApp.meldingAimFrames(
+                    kind.contains("古びた") ? 1 : kind.contains("光る") ? 2 : 0,
+                    frame, false, 4).size();
+            if (aimCount != (Integer)row[7]) {
+                mismatches.append(frame).append(": expected ").append(row[7])
+                        .append(" aim frames, actual ").append(aimCount).append('\n');
+            }
+        }
+        check(mismatches.isEmpty(), "famous rows must match RNG:\n" + mismatches);
     }
 
     private static void testSecondSkillNormalization() {
