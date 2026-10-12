@@ -14,13 +14,22 @@
 
 ## 起動方法
 
-### Windows
+### Release ZIP
+
+ZIPを展開してから起動する。Java 21以上の実行環境が必要。
+
+- Windows: `start.bat` をダブルクリック
+- macOS / Linux: 展開先で `java -jar MHXX-Charm-Snipe.jar` を実行
+
+### ソースから起動（JDK 21以上）
+
+Windows:
 ```
 run.bat
 ```
 内部で `javac` ビルド → `java` 実行 を行う。初回はビルドのため少し時間がかかる。
 
-### macOS / Linux
+macOS / Linux:
 ```
 run.sh
 ```
