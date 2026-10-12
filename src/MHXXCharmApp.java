@@ -903,9 +903,11 @@ public class MHXXCharmApp extends JFrame {
         {5401L,"溜め短縮",6,"納刀",6,3,"3m 0s 1F",2,"風化"},
         {7934L,"貫通弾強化",3,"会心強化",5,3,"4m 24s 14F",3,"風化"},
         // ===== 短時間(5~30分) =====
+        {12747L,"野草知識",1,"強撃弾追加",12,2,framesToTime(12747L),8,"光る（天運）"},
         {30502L,"痛撃",5,"溜め短縮",4,3,"16m 56s 22F",2,"風化"},
         {62669L,"痛撃",6,"達人",10,0,"34m 48s 29F",2,"風化"},
         // ===== 中時間(30分~2時間) =====
+        {92120L,"精密射撃",2,"採取",13,2,framesToTime(92120L),2,"光る（天運）"},
         {101840L,"痛撃",6,"達人",10,2,"56m 34s 20F",2,"風化"},
         {108840L,"連撃",5,"龍属性攻撃",13,3,"1h 0m 28s",2,"風化"},
         {124895L,"溜め短縮",6,"攻撃",10,3,"1h 9m 23s",3,"風化"},
@@ -922,7 +924,10 @@ public class MHXXCharmApp extends JFrame {
         {1838208L,"痛撃",4,"攻撃",10,3,"17h 1m 13s",2,"風化"},
         {2359514L,"貫通弾強化",5,"達人",10,3,"21h 50m 50s",1,"風化"},
         {2768432L,"痛撃",5,"砲術",10,3,"1d 1h 38m",2,"風化"},
+        {3526870L,"溜め短縮",2,"雷耐性",13,3,framesToTime(3526870L),1,"古びた（天運）"},
         {4351902L,"痛撃",6,"会心強化",5,3,"1d 16h 17m",2,"風化"},
+        {4675464L,"溜め短縮",1,"気絶",13,3,framesToTime(4675464L),2,"古びた（マカフシギ）"},
+        {6697938L,"達人",4,"強撃弾追加",12,1,framesToTime(6697938L),1,"光る（天運）"},
         {7016153L,"痛撃",6,"斬れ味",7,3,"2d 16h 57m",2,"風化"},
         {15069320L,"連撃",5,"達人",10,3,"5d 19h 31m",1,"風化"},
         {58161487L,"貫通弾強化",6,"達人",10,3,"22d 10h 31m",2,"風化"},
@@ -2961,7 +2966,8 @@ public class MHXXCharmApp extends JFrame {
                         method, rank, SkillNames.KIND_NAMES[fData.kind], deposits.size());
                 StringBuilder sb = new StringBuilder();
                 sb.append(String.format("目標お守り F=%,d / 投入合計 %dpt / 最初の錬金セット\n", fFrame, points));
-                sb.append("下記は錬金を確定するFです（お守り自体のFとは異なる場合があります）。\n\n");
+                sb.append("下記は錬金を確定するFです（お守り自体のFとは異なる場合があります）。\n");
+                sb.append("狙う投入Fを調合スナイプ／調合Arduinoの目標Fに入力してください。\n\n");
                 if (deposits.isEmpty()) {
                     sb.append("この方式・投入ランクでは候補なし。方式や投入ptを切り替えてください。\n");
                 } else {
@@ -3983,7 +3989,7 @@ public class MHXXCharmApp extends JFrame {
             "<html><body style='width:800px; color:#8888aa;'>" +
             "起動→Continue A→Bキャンセル(N回)→待機時間→Continue決定→ロード→マカ錬金の一連操作を自動化するコードを生成します。<br>" +
             "概算式: <b style='color:#00d2ff;'>目標F ≈ 基本消費(F) + Continue1回消費(F) × 回数 + 0.030(F/ms) × 待機時間(ms)</b><br>" +
-            "Continue消費は直前の乱数位置に依存します。長距離では調合逆算で現在Fを再特定してください。" +
+            "Continue消費は直前の乱数位置に依存します。7500回以上では大きなズレの実例があり、長距離では調合逆算で現在Fを再特定してください。" +
             "</body></html>");
         descLabel.setFont(FONT_SMALL);
         descPanel.add(descLabel);
@@ -4602,6 +4608,9 @@ public class MHXXCharmApp extends JFrame {
         sb.append("//\n");
         sb.append("// ここでArduinoを外し、録画を確認して累積弾数をツールに入力。\n");
         sb.append("// 調合基準Fを逆算し、実測オフセットを使ってコード2を生成する。\n");
+        if (numContinue >= 7500) {
+            sb.append("// 注意: Continue 7500回以上では線形の消費Fから大きくずれる実機例あり。録画から調合基準Fを必ず再特定する。\n");
+        }
         sb.append("// ================================================================\n");
         sb.append("#include <NintendoSwitchControlLibrary.h>\n\n");
 
@@ -4979,9 +4988,9 @@ public class MHXXCharmApp extends JFrame {
             "<b style='font-size:14px;'>目標フレーム = 基本消費(F) + Continue1回消費(F) × 回数 + 0.030(F/ms) × 待機時間(ms)</b><br><br>" +
             "<span style='color:#8888aa;'>「基本消費」と「Continue1回消費」は環境ごとに異なるため、以下の手順で実測します。<br>" +
             "測定した値はArduinoタブの入力欄に自動反映されます。</span><br><br>" +
-            "<span style='color:#ffc107;'>⚠ 精度に関する注意:</span><span style='color:#8888aa;'> Continue消費の測定は<b>Continue回数を大きくするほど精度が上がります</b>。<br>" +
-            "例: Continue回数=10で測定した値を本番でContinue回数=400に使うと、1回あたり2〜3Fの誤差が800〜1200Fのズレに拡大します。<br>" +
-            "本番のContinue回数が大きい場合（100以上）は、<b>50〜100回で測定する</b>ことを強く推奨します。</span>" +
+            "<span style='color:#ffc107;'>⚠ 精度に関する注意:</span><span style='color:#8888aa;'> 短い測定結果を大きなContinue回数に外挿すると誤差が拡大します。<br>" +
+            "できるだけ本番に近い回数で測定してください。ただし消費は乱数位置にも依存し、回数を増やしても線形式の精度は保証されません。<br>" +
+            "7500回以上で大きなズレの実機例があります。長距離では調合逆算で現在Fを再特定してください。</span>" +
             "</body></html>"));
         top.add(formulaPanel);
 
@@ -5197,6 +5206,10 @@ public class MHXXCharmApp extends JFrame {
             int row = table.getSelectedRow();
             if (row >= 0) {
                 int modelRow = table.convertRowIndexToModel(row);
+                if (table == famousTable) {
+                    openFamousAround(modelRow);
+                    return;
+                }
                 Object val = model.getValueAt(modelRow, frameColumnIndex);
                 aroundFrame.setText(val.toString());
                 if (table == searchTable) {
@@ -5239,7 +5252,7 @@ public class MHXXCharmApp extends JFrame {
         tab.setBackground(BG);
         tab.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
 
-        JLabel info = new JLabel("有名なお守りリスト（風化したお守り・マカ錬金）─ ダブルクリックで周辺表示タブへ");
+        JLabel info = new JLabel("有名なお守りリスト（全件マカ錬金・rank4、方式は種類欄に表示）─ ダブルクリックで周辺表示へ");
         info.setFont(FONT_SMALL);
         info.setForeground(FG);
         tab.add(info, BorderLayout.NORTH);
@@ -5256,13 +5269,7 @@ public class MHXXCharmApp extends JFrame {
                     int row = famousTable.getSelectedRow();
                     if (row >= 0) {
                         int modelRow = famousTable.convertRowIndexToModel(row);
-                        Object val = famousModel.getValueAt(modelRow, 0);
-                        data.setBlue();
-                        searchKind.setSelectedItem("風化したお守り");
-                        onKindChange();
-                        aroundFrame.setText(val.toString());
-                        selectTab("周辺表示");
-                        showAround();
+                        openFamousAround(modelRow);
                     }
                 }
             }
@@ -5276,6 +5283,18 @@ public class MHXXCharmApp extends JFrame {
         tab.add(sp, BorderLayout.CENTER);
 
         return tab;
+    }
+
+    void openFamousAround(int row) {
+        String kind = (String) famousModel.getValueAt(row, 8);
+        boolean halcyon = kind.contains("天運");
+        aroundKind.setSelectedIndex(kind.contains("古びた") ? 1 : kind.contains("光る") ? 2 : 0);
+        aroundMeldingMethod.setSelectedIndex(halcyon ? 1 : 0);
+        aroundInputPoints.setSelectedItem(halcyon ? "8" : "9");
+        aroundOrigin.setSelectedIndex(0);
+        aroundFrame.setText(famousModel.getValueAt(row, 0).toString());
+        selectTab("周辺表示");
+        showAround();
     }
 
     // ================================================================
@@ -5372,7 +5391,7 @@ public class MHXXCharmApp extends JFrame {
             "ハリの実 + カラの実 を<b>各15個以上</b>用意し、調合書を持って自宅で<br>" +
             "<b>Lv2通常弾を連続調合</b>。Switch録画で弾数の変化を記録し、<b>調合開始位置に調合による追加消費を加えた基準F</b>を逆算。<br>" +
             "前提: ルームサービス=モガの村の看板娘、ペット/オトモなし。<br>" +
-            "<b>使い方:</b> 調合基準Fと目標Fの差分から、以後の経過・移動等による消費を差し引いて待機。<br>" +
+            "<b>使い方:</b> 周辺表示の投入候補Fを目標にし、調合基準Fとの差から以後の消費を差し引いて待機。<br>" +
             "<b>入力形式:</b> 累積弾数（0始まり、例: <code>0 2 4 7 10 13 16</code>）<br>" +
             "　　 or 個数列（各回の調合数、例: <code>2,2,3,3,3,3</code>）— 自動判定します。" +
             "</body></html>");
@@ -5579,7 +5598,7 @@ public class MHXXCharmApp extends JFrame {
             "範囲が広すぎると偽マッチが大量発生する点に注意。</html>");
         comboTargetFField = makeField("", 12);
         comboTargetFField.setToolTipText(
-            "<html><b>狙うお守りのフレーム位置(任意)</b><br>" +
+            "<html><b>周辺表示の『投入F』（任意）</b>。お守り生成Fとは異なる場合があります。<br>" +
             "入力すると<b>「調合基準Fから目標Fまでの参考差分」</b>を自動表示します。<br>" +
             "また、検索範囲を「開始Fから目標Fまで+10万」に自動設定し、<br>" +
             "候補ハイライト(目標F以下で最も近い候補を緑)にも使います。</html>");
@@ -5589,7 +5608,7 @@ public class MHXXCharmApp extends JFrame {
         row2.add(comboSearchStartField);
         row2.add(label("検索数:"));
         row2.add(comboSearchRangeField);
-        row2.add(label("F  目標F:"));
+        row2.add(label("F  目標投入F:"));
         row2.add(comboTargetFField);
         JButton searchBtn = makeButton("▶ 逆算開始", ACCENT);
         comboSnipeBtn = searchBtn;  // Ctrl+Enter ショートカット用に保存
@@ -5990,7 +6009,7 @@ public class MHXXCharmApp extends JFrame {
             "<b>★前提: ココット村でセーブ必須★</b>（ロード後は村スタート → コード1が自宅へ移動）<br>" +
             "<b>ワークフロー:</b><br>" +
             "① <b>コード1</b>: Continue連打→ロード前待機→自宅で調合→録画→HOME中断<br>" +
-            "② <b>手動</b>: 録画から調合弾数を逆算し、調合基準Fと目標Fを入力<br>" +
+            "② <b>手動</b>: 録画から調合基準Fを逆算し、周辺表示の目標投入Fを入力<br>" +
             "③ <b>コード2</b>: HOME復帰→アイテムボックス前で待機→アイシャ経由の錬金→ケルビ→鑑定<br>" +
             "※ 待機が長すぎる場合は先に<b>コード3</b>で待機・マイセット復元・再調合し、新しい録画から基準Fを取り直す" +
             "</body></html>"));
@@ -6009,7 +6028,7 @@ public class MHXXCharmApp extends JFrame {
         c1Row.setOpaque(false);
         c1Row.add(label("Continue回数:"));
         comboNcField = makeField("", 8);
-        comboNcField.setToolTipText("<html>Continue連打回数。目標Fが大きいほど多くする。<br>目安: 目標F ÷ 714</html>");
+        comboNcField.setToolTipText("<html>Continue連打回数。目標F ÷ 714は概算。<br>7500回以上では大きくずれる報告があり、調合録画から基準Fを再特定してください。</html>");
         c1Row.add(comboNcField);
         c1Row.add(label("  Lv2弾までの↓数:"));
         comboDownKeysField = makeField("0", 4);
@@ -6054,10 +6073,10 @@ public class MHXXCharmApp extends JFrame {
             "<html>「調合スナイプ」タブの逆算結果（search_combo相当）を入力。<br>" +
             "調合基準Fから錬金確定までの進行は実測オフセットに含めます。</html>");
         c2Row.add(comboCurrentFField);
-        c2Row.add(label("  目標F:"));
+        c2Row.add(label("  目標投入F:"));
         comboArdTargetFField = makeField("", 10);
         JTextField comboTargetFField = comboArdTargetFField; // ローカル参照（既存コード互換、調合Arduinoタブ内）
-        comboArdTargetFField.setToolTipText("「お守り検索」や「有名お守り」タブで見つけた目標フレーム（調合スナイプの目標Fと連動）");
+        comboArdTargetFField.setToolTipText("周辺表示で錬金方式・投入ptを選んだ時の投入候補F。お守り生成Fではありません（調合スナイプと連動）。");
         c2Row.add(comboArdTargetFField);
 
         // 調合スナイプタブの目標Fと双方向連動
@@ -6181,9 +6200,10 @@ public class MHXXCharmApp extends JFrame {
             "<b>手順:</b><br>" +
             "① 本番と同じ設定の「コード1」を実行→ 録画から上の「調合基準F」を逆算<br>" +
             "② 下の「測定用コード生成」で <code>wait_ms = 0</code> のコード2を生成→Arduinoに書き込み→実行<br>" +
-            "③ 鑑定で出たお守りを「お守り検索」または「周辺表示」で照合し、フレーム値を特定<br>" +
-            "④ そのフレーム値を入力 →「調合基準Fから逆算」でオフセットに反映<br>" +
-            "<span style='color:#aaaaaa;'>※ オフセット = 実測フレーム − 調合基準F。手順を変えたら再測定。</span>" +
+            "③ 鑑定で出たお守りの生成Fを検索し、周辺表示で使用方式・投入ptの投入候補Fを確認<br>" +
+            "④ 実際の投入Fを入力 →「調合基準Fから逆算」でオフセットに反映<br>" +
+            "<span style='color:#ffcc77;'>候補が複数なら、他の鑑定お守りや操作時間で実際の投入Fを絞る。生成Fをそのまま入力しない。</span><br>" +
+            "<span style='color:#aaaaaa;'>※ オフセット = 実測投入F − 調合基準F。手順を変えたら再測定。</span>" +
             "</body></html>"));
         calPanel.add(calDesc);
 
@@ -6192,12 +6212,12 @@ public class MHXXCharmApp extends JFrame {
         JButton calGenBtn = makeButton("▶ 測定用コード生成 (wait_ms=0)", GREEN);
         calGenBtn.setToolTipText("オフセット測定用に wait_ms=0 のコード2を生成します");
         calRow.add(calGenBtn);
-        calRow.add(label("   実測フレーム:"));
+        calRow.add(label("   実測投入F:"));
         JTextField calMeasuredField = makeField("", 10);
-        calMeasuredField.setToolTipText("鑑定で判明したお守りのフレーム値（投入確定時の乱数フレーム）");
+        calMeasuredField.setToolTipText("周辺表示で実際に当たった錬金確定F。お守り生成Fと同一とは限りません。");
         calRow.add(calMeasuredField);
         JButton calApplyBtn = makeButton("調合基準Fから逆算してオフセット設定", ACCENT);
-        calApplyBtn.setToolTipText("オフセット = 実測フレーム − 調合基準F で逆算します");
+        calApplyBtn.setToolTipText("オフセット = 実測投入F − 調合基準F で逆算します");
         calRow.add(calApplyBtn);
         JLabel calResultLabel = new JLabel("");
         calResultLabel.setFont(FONT_LARGE);

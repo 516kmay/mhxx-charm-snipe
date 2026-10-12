@@ -124,7 +124,7 @@ public final class MHXXCharmAppTest {
             }
             int aimCount = MHXXCharmApp.meldingAimFrames(
                     kind.contains("古びた") ? 1 : kind.contains("光る") ? 2 : 0,
-                    frame, false, 4).size();
+                    frame, kind.contains("天運"), 4).size();
             if (aimCount != (Integer)row[7]) {
                 mismatches.append(frame).append(": expected ").append(row[7])
                         .append(" aim frames, actual ").append(aimCount).append('\n');
@@ -213,6 +213,9 @@ public final class MHXXCharmAppTest {
     private static void testComboSketchGeneration() {
         String code1 = MHXXCharmApp.generateComboCode1(3, 2, 90_000, true);
         check(code1.contains("i < 3"), "code1 Continue count");
+        check(!code1.contains("7500回以上"), "short code1 needs no long-distance warning");
+        check(MHXXCharmApp.generateComboCode1(7500, 0).contains("7500回以上"),
+                "long code1 warns that Continue consumption needs remeasurement");
         check(code1.contains("while (millis() - cycle_start < 500UL) delay(1);"),
                 "code1 Continue cycle aligned to 500ms");
         check(code1.indexOf("delay(90000);") > code1.indexOf("i < 3"),
