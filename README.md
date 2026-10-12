@@ -8,7 +8,7 @@
 
 ## 動作環境
 
-- Java 21 以上
+- Java 21 以上（WindowsのOracle JDK 27でも動作確認済み）
 - Switch版MHXX（実機RNG挙動に基づく）
 - Arduino機能を使う場合: Arduino Leonardo + NintendoSwitchControlLibrary
 
@@ -28,6 +28,8 @@ Windows:
 run.bat
 ```
 内部で `javac` ビルド → `java` 実行 を行う。初回はビルドのため少し時間がかかる。
+
+JDK 27でも、既存の `--release 21` 設定のままビルドできる。WindowsのOracle JDK 27で、ビルド・回帰テスト168項目・v0.4.6の配布JARの起動を確認済み。
 
 macOS / Linux:
 ```
