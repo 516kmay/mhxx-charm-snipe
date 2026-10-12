@@ -4640,8 +4640,8 @@ public class MHXXCharmApp extends JFrame {
         sb.append("//   8. 30秒録画（キャプチャーボタン長押し）\n");
         sb.append("//   9. HOMEボタンでゲーム中断\n");
         sb.append("//\n");
-        sb.append("// ここでArduinoを外し、録画を確認して累積弾数をツールに入力。\n");
-        sb.append("// 調合開始Fを逆算し、目標Fからコード2の投入時刻を計算する。\n");
+        sb.append("// ここでArduinoを外し、録画を外部の調合フレーム特定ツールで解析。\n");
+        sb.append("// 表示された調合開始Fを本アプリに入力し、コード2の投入時刻を計算する。\n");
         if (numContinue >= 7500) {
             sb.append("// 注意: Continue 7500回以上では線形の消費Fから大きくずれる実機例あり。録画から調合開始Fを必ず再特定する。\n");
         }
@@ -4766,7 +4766,7 @@ public class MHXXCharmApp extends JFrame {
         sb.append("// ================================================================\n");
         sb.append("// 実行前提:\n");
         sb.append("//   - コード1実行後、HOMEでゲーム中断した状態\n");
-        sb.append("//   - 録画から累積弾数を読み取り、調合開始Fを逆算済み\n");
+        sb.append("//   - 外部ツールで録画を解析し、表示された調合開始Fを入力済み\n");
         sb.append("//   - Switchの自動スリープを無効化しておく\n");
         if (pairController) {
             sb.append("//   - 実行前にHOME→コントローラー→持ち方/順番を変えるを開いておく\n");
@@ -6094,7 +6094,7 @@ public class MHXXCharmApp extends JFrame {
             "<html><body style='width:800px; color:#8888aa;'>" +
             "<b>ココット村でセーブしてから開始。</b> 周辺表示で錬金の投入候補Fを選びます。<br>" +
             "① Continue回数を概算してコード1を実行 → 調合を録画してHOMEで中断<br>" +
-            "② 調合スナイプで録画の弾数から調合開始Fを特定 → ここへ転送<br>" +
+            "② 録画を外部ツールで解析 → 表示された調合開始Fを下の欄に入力<br>" +
             "③ コード2でルームサービスへ移動し、投入確認画面で目標時刻まで待って確定<br>" +
             "※ 初回の校正は不要。実機でずれた場合だけ詳細設定の着弾補正Fを使います。" +
             "</body></html>"));
@@ -6189,13 +6189,10 @@ public class MHXXCharmApp extends JFrame {
         // --- 調合から現在Fを特定 ---
         JPanel measureRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
         measureRow.setOpaque(false);
-        JLabel measureLabel = new JLabel("2. 録画の調合結果から調合開始Fを特定");
+        JLabel measureLabel = new JLabel("2. 外部ツールで録画を解析し、調合開始Fを入力");
         measureLabel.setFont(FONT_UI_BOLD);
         measureLabel.setForeground(ACCENT);
         measureRow.add(measureLabel);
-        JButton openComboSearch = makeButton("調合スナイプで逆算する", BTN_BG);
-        openComboSearch.addActionListener(e -> selectTab("調合スナイプ"));
-        measureRow.add(openComboSearch);
         settings.add(measureRow);
 
         // --- コード2パラメータ ---
@@ -6213,8 +6210,8 @@ public class MHXXCharmApp extends JFrame {
         comboArdCurrentFField = makeField("", 10);
         JTextField comboCurrentFField = comboArdCurrentFField; // ローカル参照（既存コード互換）
         comboCurrentFField.setToolTipText(
-            "<html>「調合スナイプ」タブの逆算結果（search_combo相当）を入力。<br>" +
-            "このFを調合開始時の基準として扱い、コード1の調合開始からHOMEまでの時間を差し引きます。</html>");
+            "<html>外部ツールに表示された「調合開始時点のフレーム」を入力。<br>" +
+            "HOME中断時の現在Fではありません。コード1の調合開始からHOMEまでの時間は自動で差し引きます。</html>");
         c2Row.add(comboCurrentFField);
         c2Row.add(label("  → 復帰から投入まで:"));
         JLabel comboWaitLabel = new JLabel("---");
