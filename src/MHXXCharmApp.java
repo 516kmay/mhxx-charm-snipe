@@ -4646,6 +4646,7 @@ public class MHXXCharmApp extends JFrame {
         sb.append("// 実行前提:\n");
         sb.append("//   ★ ココット村でセーブ済み（ロード後は村スタート → 自宅へ自動移動します）★\n");
         sb.append("//   - ハリの実×15以上, カラの実×15以上, 調合書①入門編を所持\n");
+        sb.append("//   - Lv2通常弾は0個から開始。調合リストの初期カーソル位置を確認\n");
         sb.append("//   - オトモなし / ペットがいる場合は退避オプションを選択\n");
         sb.append("//   - ルームサービス = モガの村の看板娘\n");
         sb.append("//   - Switchのアルバムに空きがあること（30秒録画用）\n");
@@ -4698,9 +4699,11 @@ public class MHXXCharmApp extends JFrame {
 
         if (removePoogie) {
             sb.append("    // ペットが自宅にいる場合のみ: 抱えて外へ出す\n");
-            sb.append("    // 話しかける位置・出口操作は実機の配置に合わせて確認すること\n");
+            sb.append("    // 原典は移動座標と手順のみ。置く・再入室の位置と待ち時間は実機で確認\n");
             sb.append("    tiltLeftStick(Stick::MIN, 10, 1100);\n");
-            sb.append("    pushButton(Button::A, 250);       // ペットを抱く\n");
+            sb.append("    pushButton(Button::A, 250);       // ペットのメニューを開く\n");
+            sb.append("    pushHat(Hat::DOWN, 100);          // 下1回で「抱く」を選択\n");
+            sb.append("    pushButton(Button::A, 250);       // 抱くを決定\n");
             sb.append("    tiltLeftStick(Stick::MAX, Stick::MAX, 2000);\n");
             sb.append("    pushButton(Button::A, 250);       // 自宅から出る\n");
             sb.append("    delay(2000);\n");
@@ -4773,6 +4776,7 @@ public class MHXXCharmApp extends JFrame {
         sb.append("// 実行前提:\n");
         sb.append("//   - コード1実行後、HOMEでゲーム中断した状態\n");
         sb.append("//   - 外部ツールで録画を解析し、表示された調合開始Fを入力済み\n");
+        sb.append("//   - 投入用の護石3個と納品用のケルビの角を所持。護石の選択位置を確認\n");
         sb.append("//   - Switchの自動スリープを無効化しておく\n");
         if (pairController) {
             sb.append("//   - 実行前にHOME→コントローラー→持ち方/順番を変えるを開いておく\n");
@@ -6257,7 +6261,7 @@ public class MHXXCharmApp extends JFrame {
         c1Options.add(comboPreLoadWaitField);
         c1Options.add(label("ms"));
         comboRemovePoogieCheck = new JCheckBox("自宅のプーギーを屋外へ出す", false);
-        comboRemovePoogieCheck.setToolTipText("ペットがいる時だけ選択。抱く・出入口操作は実機の配置に合わせて確認してください。");
+        comboRemovePoogieCheck.setToolTipText("ペットがいる時だけ選択。A→下1回→Aで抱き、プーギーへ向かった左上とは逆の右下方向へ戻って退出。置く・再入室の位置と待ち時間は実機で確認してください。");
         comboRemovePoogieCheck.setOpaque(false);
         comboRemovePoogieCheck.setForeground(FG);
         c1Options.add(comboRemovePoogieCheck);
