@@ -4843,7 +4843,7 @@ public class MHXXCharmApp extends JFrame {
         sb.append("    // Step 6: 受付嬢へダッシュ → ケルビ納品クエスト\n");
         sb.append("    SwitchControlLibrary().pressButton(Button::R);\n");
         sb.append("    SwitchControlLibrary().sendReport();\n");
-        sb.append("    tiltLeftStick(Stick::NEUTRAL, Stick::MIN, 3000);\n");
+        sb.append("    tiltLeftStick(Stick::MAX, Stick::MIN, 1500);\n");
         sb.append("    SwitchControlLibrary().releaseButton(Button::R);\n");
         sb.append("    SwitchControlLibrary().sendReport();\n");
         sb.append("    pushButton(Button::A, 250, 3); // 受付嬢に話しかけ\n");

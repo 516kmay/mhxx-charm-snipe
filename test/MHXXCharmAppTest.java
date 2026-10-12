@@ -301,13 +301,21 @@ public final class MHXXCharmAppTest {
                         .contains("void setup() { delay(50); " + resumeSequence),
                 "code2 defaults to 50ms, Y three times, timer, HOME, and 500ms resume wait");
         String receptionistRoute = "SwitchControlLibrary().pressButton(Button::R); "
+                + "SwitchControlLibrary().sendReport(); tiltLeftStick(Stick::MAX, Stick::MIN, 1500); "
+                + "SwitchControlLibrary().releaseButton(Button::R); SwitchControlLibrary().sendReport(); "
+                + "pushButton(Button::A, 250, 3);";
+        for (String code : new String[]{code2, code2WithoutPairing}) {
+            check(code.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").contains(receptionistRoute),
+                    "code2 dashes diagonally for 1500ms before talking to the receptionist");
+        }
+        String calibrationReceptionistRoute = "SwitchControlLibrary().pressButton(Button::R); "
                 + "SwitchControlLibrary().sendReport(); tiltLeftStick(Stick::NEUTRAL, Stick::MIN, 3000); "
                 + "SwitchControlLibrary().releaseButton(Button::R); SwitchControlLibrary().sendReport(); "
                 + "pushButton(Button::A, 250, 3);";
-        for (String code : new String[]{code2, code2WithoutPairing,
-                MHXXCharmApp.generateArduinoCode(4, 10_000), MHXXCharmApp.generateArduinoCode(4, 10_000, 500)}) {
-            check(code.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").contains(receptionistRoute),
-                    "all melding sketches dash straight for three seconds before talking to the receptionist");
+        for (String code : new String[]{MHXXCharmApp.generateArduinoCode(4, 10_000),
+                MHXXCharmApp.generateArduinoCode(4, 10_000, 500)}) {
+            check(code.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").contains(calibrationReceptionistRoute),
+                    "standalone and calibration sketches keep their existing receptionist route");
         }
         expectInvalid(() -> MHXXCharmApp.generateComboCode1(-1, 0, 0, false), "negative Continue rejected");
         expectInvalid(() -> MHXXCharmApp.generateComboCode1(0, 0, -1, false), "negative pre-load wait rejected");
