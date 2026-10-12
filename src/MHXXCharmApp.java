@@ -4923,6 +4923,8 @@ public class MHXXCharmApp extends JFrame {
             sb.append("    delay(1500);\n");
             sb.append("    pushButton(Button::A, 250); // 接続確定→HOMEに戻る\n\n");
         }
+        sb.append("    // HOME復帰前の準備入力: Yを3回送る（ゲーム中断中に済ませる）\n");
+        sb.append("    pushButton(Button::Y, 250, 3);\n");
         sb.append("    // HOMEでゲーム復帰（自宅のアイテムボックス前）\n");
         if (trackResume) sb.append("    unsigned long resume_started_ms = millis();\n");
         sb.append("    pushButton(Button::HOME, 500);\n");

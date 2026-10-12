@@ -263,6 +263,11 @@ public final class MHXXCharmAppTest {
         check(code2.contains("unsigned long target_elapsed_ms = 15345;"), "code2 deadline literal");
         check(code2.contains("unsigned long resume_started_ms = millis();"),
                 "code2 starts timing when HOME resumes the game");
+        String resumeSequence = "pushButton(Button::Y, 250, 3); "
+                + "unsigned long resume_started_ms = millis(); "
+                + "pushButton(Button::HOME, 500); delay(500);";
+        check(code2.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").contains(resumeSequence),
+                "code2 sends Y three times before starting the HOME resume timer after pairing");
         check(code2.contains("while ((unsigned long)(millis() - resume_started_ms) < target_elapsed_ms) delay(1);"),
                 "code2 waits for its deadline");
         check(code2.indexOf("target_elapsed_ms") < code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);"),
@@ -280,8 +285,12 @@ public final class MHXXCharmAppTest {
         check(code2.contains("pressButton(Button::L);") && code2.contains("pressButton(Button::R);"),
                 "code2 optional simultaneous L+R pairing");
         check(!code2.contains("waitWithKeepAlive"), "code2 wait does not press a menu button");
-        check(!MHXXCharmApp.generateComboCode2(15_345, false).contains("pressButton(Button::L);"),
+        String code2WithoutPairing = MHXXCharmApp.generateComboCode2(15_345, false);
+        check(!code2WithoutPairing.contains("pressButton(Button::L);"),
                 "code2 does not assume pairing screen by default");
+        check(code2WithoutPairing.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ")
+                        .contains("void setup() { delay(50); " + resumeSequence),
+                "code2 defaults to 50ms, Y three times, timer, HOME, and 500ms resume wait");
         expectInvalid(() -> MHXXCharmApp.generateComboCode1(-1, 0, 0, false), "negative Continue rejected");
         expectInvalid(() -> MHXXCharmApp.generateComboCode1(0, 0, -1, false), "negative pre-load wait rejected");
         expectInvalid(() -> MHXXCharmApp.generateComboCode2(-1, false), "negative code2 deadline rejected");
@@ -314,6 +323,12 @@ public final class MHXXCharmAppTest {
         check(code3.contains("新しい録画から調合開始Fを再特定"),
                 "code3 directs new frame measurement");
         String firstSlot = MHXXCharmApp.generateComboCode3(0, 0, 0, 0, 1, 0, false);
+        String backupResumeSequence = "pushButton(Button::Y, 250, 3); "
+                + "pushButton(Button::HOME, 500); delay(500);";
+        check(code3.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").contains(backupResumeSequence)
+                        && firstSlot.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ")
+                                .contains("void setup() { delay(50); " + backupResumeSequence),
+                "code3 sends Y three times before HOME both with and without pairing");
         check(!firstSlot.contains("// 登録番号 "), "first item set slot needs no movement");
         check(!firstSlot.contains("// 呼び出し確認"), "confirmation step can be disabled");
         String directList = MHXXCharmApp.generateComboCode3(0, 0, 2, -1, 1, 0, false);
