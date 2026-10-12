@@ -9,6 +9,9 @@ public final class MHXXCharmAppTest {
     public static void main(String[] args) {
         testJumpMatchesSequentialRng();
         testKnownCharmAndRangeSearch();
+        testMeldingAimFramesByRecipeAndRank();
+        testMeldingRankFromInputPoints();
+        testFamousCharmsMatchRng();
         testSecondSkillNormalization();
         testComboReverseSearchAndStartFrame();
         testComboSketchGeneration();
@@ -65,6 +68,69 @@ public final class MHXXCharmAppTest {
                 data, conditions, 0, 1_700L, 30, null, null, null);
         check(multiHits.stream().anyMatch(row -> ((Long)row[0]) == 1716L),
                 "multi search start frame must include known 1716F charm");
+    }
+
+    private static void testMeldingAimFramesByRecipeAndRank() {
+        equal(3, MHXXCharmApp.meldingAimFrames(0, 7_934L, false, 4).size(),
+                "published weathered charm has three Juju rank-4 aim points");
+        equal(List.of(), MHXXCharmApp.meldingAimFrames(1, 3_526_870L, false, 4),
+                "old charm cannot be obtained with Juju rank 4 at this target");
+        equal(List.of(3_526_864L), MHXXCharmApp.meldingAimFrames(1, 3_526_870L, false, 3),
+                "Juju rank 3 old charm uses the earlier deposit frame");
+        equal(List.of(3_526_870L), MHXXCharmApp.meldingAimFrames(1, 3_526_870L, true, 4),
+                "Halcyon rank 4 old charm is available at the target frame");
+
+        List<Long> shining = MHXXCharmApp.meldingAimFrames(2, 12_747L, true, 4);
+        equal(8, shining.size(), "published shining-charm example has eight rank-4 aim points");
+        check(shining.contains(12_733L) && shining.contains(12_741L),
+                "published shining-charm deposit frames are included");
+        equal(List.of(), MHXXCharmApp.meldingAimFrames(0, 12_747L, true, 4),
+                "Halcyon never yields a weathered charm");
+        expectInvalid(() -> MHXXCharmApp.meldingAimFrames(1, 100L, false, 0),
+                "melding rank must be 1..4");
+    }
+
+    private static void testMeldingRankFromInputPoints() {
+        equal(1, MHXXCharmApp.meldingRank(true, 3), "Halcyon 3 points");
+        equal(2, MHXXCharmApp.meldingRank(true, 5), "Halcyon 5 points");
+        equal(3, MHXXCharmApp.meldingRank(true, 7), "Halcyon 7 points");
+        equal(4, MHXXCharmApp.meldingRank(true, 8), "Halcyon 8 points");
+        equal(1, MHXXCharmApp.meldingRank(false, 4), "Juju 4 points");
+        equal(2, MHXXCharmApp.meldingRank(false, 5), "Juju 5 points");
+        equal(3, MHXXCharmApp.meldingRank(false, 8), "Juju 8 points");
+        equal(4, MHXXCharmApp.meldingRank(false, 9), "Juju 9 points");
+        expectInvalid(() -> MHXXCharmApp.meldingRank(false, 2), "too few input points rejected");
+        expectInvalid(() -> MHXXCharmApp.meldingRank(true, 10), "too many input points rejected");
+    }
+
+    private static void testFamousCharmsMatchRng() {
+        StringBuilder mismatches = new StringBuilder();
+        for (Object[] row : MHXXCharmApp.FAMOUS_CHARMS) {
+            long frame = (Long)row[0];
+            CharmData data = new CharmData();
+            String kind = (String)row[8];
+            if (kind.contains("古びた")) data.setRed();
+            else if (kind.contains("光る")) data.setYellow();
+            else data.setBlue();
+            MHXXCharmApp.RNG rng = new MHXXCharmApp.RNG();
+            rng.jump(frame);
+            MHXXCharmApp.Charm charm = MHXXCharmApp.getCharm(rng, data, 0);
+            if (!row[1].equals(charm.s1Name()) || !row[2].equals(charm.sp1())
+                    || !row[3].equals(charm.s2Name()) || !row[4].equals(charm.sp2())
+                    || !row[5].equals(charm.slot())) {
+                mismatches.append(frame).append(": expected ").append(row[1]).append(row[2])
+                        .append(" ").append(row[3]).append(row[4]).append(" S").append(row[5])
+                        .append(", actual ").append(charm).append('\n');
+            }
+            int aimCount = MHXXCharmApp.meldingAimFrames(
+                    kind.contains("古びた") ? 1 : kind.contains("光る") ? 2 : 0,
+                    frame, kind.contains("天運"), 4).size();
+            if (aimCount != (Integer)row[7]) {
+                mismatches.append(frame).append(": expected ").append(row[7])
+                        .append(" aim frames, actual ").append(aimCount).append('\n');
+            }
+        }
+        check(mismatches.isEmpty(), "famous rows must match RNG:\n" + mismatches);
     }
 
     private static void testSecondSkillNormalization() {
@@ -147,6 +213,9 @@ public final class MHXXCharmAppTest {
     private static void testComboSketchGeneration() {
         String code1 = MHXXCharmApp.generateComboCode1(3, 2, 90_000, true);
         check(code1.contains("i < 3"), "code1 Continue count");
+        check(!code1.contains("7500回以上"), "short code1 needs no long-distance warning");
+        check(MHXXCharmApp.generateComboCode1(7500, 0).contains("7500回以上"),
+                "long code1 warns that Continue consumption needs remeasurement");
         check(code1.contains("while (millis() - cycle_start < 500UL) delay(1);"),
                 "code1 Continue cycle aligned to 500ms");
         check(code1.indexOf("delay(90000);") > code1.indexOf("i < 3"),
@@ -163,6 +232,8 @@ public final class MHXXCharmAppTest {
 
         String code2 = MHXXCharmApp.generateComboCode2(12_345, 200, true);
         check(code2.contains("unsigned long wait_ms = 12345;"), "code2 wait literal");
+        check(code2.contains("目標投入F") && code2.contains("概算"),
+                "code2 labels deposit frame and warns that waiting can drift");
         check(code2.indexOf("delay(wait_ms);") < code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);"),
                 "code2 waits at item box before walking to room service");
         check(code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);") < code2.indexOf("// Step 4: ルームサービスに話しかけ"),
