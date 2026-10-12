@@ -4819,9 +4819,7 @@ public class MHXXCharmApp extends JFrame {
         sb.append("    delay(100);\n");
         sb.append("    pushButton(Button::A, 250);\n");
         sb.append("    pushHat(Hat::DOWN, 50, 3);\n");
-        sb.append("    pushButton(Button::A, 250); // マカ錬金\n");
-        sb.append("    pushHat(Hat::DOWN, 50);\n");
-        sb.append("    pushButton(Button::A, 250, 2);\n");
+        sb.append("    pushButton(Button::A, 250, 2); // マカ錬金\n");
         sb.append("    // 護石3個を選ぶ（投入確認まで）\n");
         sb.append("    pushHat(Hat::UP);\n");
         sb.append("    pushButton(Button::A, 10);\n");

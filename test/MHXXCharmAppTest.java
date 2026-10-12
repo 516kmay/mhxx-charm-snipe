@@ -280,6 +280,15 @@ public final class MHXXCharmAppTest {
                 "code2 confirms immediately after its deadline");
         check(code2.indexOf("tiltLeftStick(Stick::MAX, 190, 2500);") < code2.indexOf("// Step 3: ルームサービスに話しかけ"),
                 "code2 uses room service after walking");
+        String meldingOperations = code2.substring(code2.indexOf("// Step 3:"), code2.indexOf("// Step 4:"))
+                .replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").trim();
+        equal("pushButton(Button::A, 250, 2); pushButton(Button::B, 250, 2); delay(100); "
+                        + "pushButton(Button::A, 250); pushHat(Hat::DOWN, 50, 3); "
+                        + "pushButton(Button::A, 250, 2); pushHat(Hat::UP); "
+                        + "pushButton(Button::A, 10); pushButton(Button::A, 10); "
+                        + "pushHat(Hat::DOWN, 10); pushButton(Button::A, 10); "
+                        + "pushHat(Hat::DOWN, 10); pushButton(Button::A, 10); delay(1000);",
+                meldingOperations, "code2 selects melding with two A inputs then selects three charms without an extra menu move");
         check(code2.indexOf("pushButton(Button::X, 250);     // 自宅から村へ戻る") >
                 code2.indexOf("// Step 4: 移動・メニュー時間を含めた時刻で投入確定"), "code2 exits home after melding");
         check(code2.contains("pressButton(Button::L);") && code2.contains("pressButton(Button::R);"),
