@@ -10,6 +10,7 @@ public final class MHXXCharmAppTest {
         testJumpMatchesSequentialRng();
         testKnownCharmAndRangeSearch();
         testMeldingAimFramesByRecipeAndRank();
+        testMeldingRankFromInputPoints();
         testSecondSkillNormalization();
         testComboReverseSearchAndStartFrame();
         testComboSketchGeneration();
@@ -86,6 +87,19 @@ public final class MHXXCharmAppTest {
                 "Halcyon never yields a weathered charm");
         expectInvalid(() -> MHXXCharmApp.meldingAimFrames(1, 100L, false, 0),
                 "melding rank must be 1..4");
+    }
+
+    private static void testMeldingRankFromInputPoints() {
+        equal(1, MHXXCharmApp.meldingRank(true, 3), "Halcyon 3 points");
+        equal(2, MHXXCharmApp.meldingRank(true, 5), "Halcyon 5 points");
+        equal(3, MHXXCharmApp.meldingRank(true, 7), "Halcyon 7 points");
+        equal(4, MHXXCharmApp.meldingRank(true, 8), "Halcyon 8 points");
+        equal(1, MHXXCharmApp.meldingRank(false, 4), "Juju 4 points");
+        equal(2, MHXXCharmApp.meldingRank(false, 5), "Juju 5 points");
+        equal(3, MHXXCharmApp.meldingRank(false, 8), "Juju 8 points");
+        equal(4, MHXXCharmApp.meldingRank(false, 9), "Juju 9 points");
+        expectInvalid(() -> MHXXCharmApp.meldingRank(false, 2), "too few input points rejected");
+        expectInvalid(() -> MHXXCharmApp.meldingRank(true, 10), "too many input points rejected");
     }
 
     private static void testSecondSkillNormalization() {
