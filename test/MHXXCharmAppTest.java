@@ -17,6 +17,7 @@ public final class MHXXCharmAppTest {
         testFamousCharmsMatchRng();
         testSecondSkillNormalization();
         testComboReverseSearchAndStartFrame();
+        testUnifiedContinueLoop();
         testComboSketchGeneration();
         testComboBackupSketchGeneration();
         testComboFrameTransfer();
@@ -217,14 +218,32 @@ public final class MHXXCharmAppTest {
                 "combo search start frame");
     }
 
+    private static void testUnifiedContinueLoop() {
+        String expectedLoop = "for (unsigned long i = 0; i < 4; i++) { "
+                + "SwitchControlLibrary().releaseButton(Button::B); "
+                + "SwitchControlLibrary().pressButton(Button::A); "
+                + "SwitchControlLibrary().sendReport(); delay(75); "
+                + "SwitchControlLibrary().releaseButton(Button::A); "
+                + "SwitchControlLibrary().pressButton(Button::B); "
+                + "SwitchControlLibrary().sendReport(); delay(75); } "
+                + "SwitchControlLibrary().releaseButton(Button::B); SwitchControlLibrary().sendReport();";
+        for (String code : new String[]{MHXXCharmApp.generateArduinoCode(4, 10_000),
+                MHXXCharmApp.generateComboCode1(4, 0)}) {
+            check(code.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").contains(expectedLoop),
+                    "every sketch alternates A/B for 75ms each and finishes with B released");
+            check(!code.contains("cycle_start") && !code.contains("// 事前待機 (10秒)"),
+                    "unified Continue loop has no old cycle padding or pre-wait");
+        }
+    }
+
     private static void testComboSketchGeneration() {
         String code1 = MHXXCharmApp.generateComboCode1(3, 2, 90_000, true);
         check(code1.contains("i < 3"), "code1 Continue count");
         check(!code1.contains("7500回以上"), "short code1 needs no long-distance warning");
         check(MHXXCharmApp.generateComboCode1(7500, 0).contains("7500回以上"),
                 "long code1 warns that Continue consumption needs remeasurement");
-        check(code1.contains("while (millis() - cycle_start < 500UL) delay(1);"),
-                "code1 Continue cycle aligned to 500ms");
+        check(code1.contains("公称1周期150ms") && code1.contains("delay(75);"),
+                "code1 uses the measured 75ms hold for each button");
         check(code1.indexOf("delay(90000);") > code1.indexOf("i < 3"),
                 "code1 pre-load wait follows Continue loop");
         check(code1.indexOf("delay(90000);") < code1.indexOf("pushButton(Button::A, 250, 4);"),
@@ -326,11 +345,9 @@ public final class MHXXCharmAppTest {
                 + "SwitchControlLibrary().sendReport(); tiltLeftStick(Stick::NEUTRAL, Stick::MIN, 3000); "
                 + "SwitchControlLibrary().releaseButton(Button::R); SwitchControlLibrary().sendReport(); "
                 + "pushButton(Button::A, 250, 3);";
-        for (String code : new String[]{MHXXCharmApp.generateArduinoCode(4, 10_000),
-                MHXXCharmApp.generateArduinoCode(4, 10_000, 500)}) {
-            check(code.replaceAll("(?m)//.*$", "").replaceAll("\\s+", " ").contains(calibrationReceptionistRoute),
-                    "standalone and calibration sketches keep their existing receptionist route");
-        }
+        check(MHXXCharmApp.generateArduinoCode(4, 10_000).replaceAll("(?m)//.*$", "")
+                        .replaceAll("\\s+", " ").contains(calibrationReceptionistRoute),
+                "the shared standalone and calibration sketch keeps its existing receptionist route");
         expectInvalid(() -> MHXXCharmApp.generateComboCode1(-1, 0, 0, false), "negative Continue rejected");
         expectInvalid(() -> MHXXCharmApp.generateComboCode1(0, 0, -1, false), "negative pre-load wait rejected");
         expectInvalid(() -> MHXXCharmApp.generateComboCode2(-1, false), "negative code2 deadline rejected");
@@ -417,7 +434,7 @@ public final class MHXXCharmAppTest {
 
     private static void testComboContinuePlanAndWait() {
         equal(21_012, MHXXCharmApp.estimateInitialComboContinueCount(15_069_320, 717),
-                "initial 500ms-cycle estimate leaves room for measurement and final wait");
+                "initial calibrated estimate leaves room for measurement and final wait");
         equal(0, MHXXCharmApp.estimateInitialComboContinueCount(1_000, 717),
                 "short target does not produce negative Continue count");
         expectInvalid(() -> MHXXCharmApp.estimateInitialComboContinueCount(0, 717),
@@ -441,28 +458,32 @@ public final class MHXXCharmAppTest {
     }
 
     private static void testComboCalibrationLink() {
-        equal(717.0, MHXXCharmApp.comboContinueFrames(null), "uncalibrated combo uses its initial estimate");
-        double calibrated = MHXXCharmApp.calculateCalibratedContinueFrames(5_176, 1_675, 10_000, 4, 500);
-        equal(800.25, calibrated, "500ms calibration retains fractional consumption");
+        expectInvalid(() -> MHXXCharmApp.comboContinueFrames(null), "unmeasured 75ms consumption is not guessed");
+        double calibrated = MHXXCharmApp.calculateCalibratedContinueFrames(5_176, 1_675, 10_000, 4);
+        equal(800.25, calibrated, "shared calibration retains fractional consumption");
         equal(119, MHXXCharmApp.estimateInitialComboContinueCount(100_000,
                 MHXXCharmApp.comboContinueFrames(calibrated)), "initial count uses the calibrated rate");
         equal(132, MHXXCharmApp.estimateComboContinueCount(100_000, 72_000, 100, calibrated),
                 "measured-frame replanning uses the calibrated rate");
-        equal(714.0, MHXXCharmApp.calculateCalibratedContinueFrames(37_975, 1_675, 10_000, 50, 400),
-                "400ms calibration excludes its one-time 10-second pre-wait");
-        String comboCalibration = MHXXCharmApp.generateArduinoCode(4, 10_000, 500);
-        check(comboCalibration.contains("while (millis() - cycle_start < 500UL) delay(1);"),
-                "combo calibration uses the same 500ms Continue cycle as code1");
-        check(!comboCalibration.contains("// 事前待機 (10秒)"),
-                "combo calibration adds no pre-wait absent from code1");
-        String legacy = MHXXCharmApp.generateArduinoCode(4, 10_000);
-        check(legacy.contains("// 事前待機 (10秒)") && !legacy.contains("< 500UL"),
-                "standalone Arduino keeps its 400ms operation");
+        equal(720.0, MHXXCharmApp.calculateCalibratedContinueFrames(37_975, 1_675, 10_000, 50),
+                "shared calibration subtracts only the actual post-loop wait");
+        check(!MHXXCharmApp.generateArduinoCode(0, 10_000).contains("for (unsigned long i = 0; i < 0; i++)"),
+                "zero-Continue basic calibration has no Continue cycle");
+        java.util.Properties settings = new java.util.Properties();
+        settings.setProperty("arduino.fc", "714");
+        settings.setProperty("combo.continueFrames.500ms", "717");
+        equal(null, MHXXCharmApp.readContinueCalibration(settings), "legacy rates are not reused for the new button sequence");
+        settings.setProperty(MHXXCharmApp.CONTINUE_FRAMES_SETTING, String.valueOf(calibrated));
+        equal(calibrated, MHXXCharmApp.readContinueCalibration(settings), "shared 75ms rate restores with fractional precision");
+        for (String invalid : new String[]{"", "invalid", "0", "-1", "NaN", "Infinity"}) {
+            settings.setProperty(MHXXCharmApp.CONTINUE_FRAMES_SETTING, invalid);
+            equal(null, MHXXCharmApp.readContinueCalibration(settings), "invalid saved rate ignored: " + invalid);
+        }
         expectInvalid(() -> MHXXCharmApp.comboContinueFrames(0.0), "zero calibrated consumption rejected");
         expectInvalid(() -> MHXXCharmApp.comboContinueFrames(Double.NaN), "invalid calibrated consumption rejected");
-        expectInvalid(() -> MHXXCharmApp.calculateCalibratedContinueFrames(5_176, 1_675, 10_000, 0, 500),
+        expectInvalid(() -> MHXXCharmApp.calculateCalibratedContinueFrames(5_176, 1_675, 10_000, 0),
                 "calibration needs a nonzero Continue count");
-        expectInvalid(() -> MHXXCharmApp.calculateCalibratedContinueFrames(1_000, 1_675, 10_000, 4, 500),
+        expectInvalid(() -> MHXXCharmApp.calculateCalibratedContinueFrames(1_000, 1_675, 10_000, 4),
                 "inconsistent calibration rejected");
         expectInvalid(() -> MHXXCharmApp.estimateInitialComboContinueCount(100_000, -1),
                 "initial estimate rejects an invalid calibrated rate");
