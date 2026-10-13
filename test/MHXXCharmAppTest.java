@@ -18,6 +18,7 @@ public final class MHXXCharmAppTest {
         testSecondSkillNormalization();
         testComboReverseSearchAndStartFrame();
         testUnifiedContinueLoop();
+        testRecognitionUsesY();
         testComboSketchGeneration();
         testComboBackupSketchGeneration();
         testComboFrameTransfer();
@@ -234,6 +235,14 @@ public final class MHXXCharmAppTest {
             check(!code.contains("cycle_start") && !code.contains("// 事前待機 (10秒)"),
                     "unified Continue loop has no old cycle padding or pre-wait");
         }
+    }
+
+    private static void testRecognitionUsesY() {
+        String code = MHXXCharmApp.generateArduinoCode(50, 20_000);
+        check(code.contains("uint16_t button = Button::Y,") && !code.contains("uint16_t button = Button::X,"),
+                "long-wait controller recognition defaults to Y");
+        check(code.contains("pushButton(Button::X, 250);"),
+                "game menu navigation still uses X where required");
     }
 
     private static void testComboSketchGeneration() {

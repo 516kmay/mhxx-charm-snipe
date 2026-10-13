@@ -11,7 +11,7 @@ unsigned long wait_ms = 10000;
 unsigned long continue_hold_ms = 75; // A・Bそれぞれの保持時間。公称1周はこの2倍。
 
 void waitWithKeepAlive(unsigned long total_ms,
-                       uint16_t button = Button::X,
+                       uint16_t button = Button::Y,
                        unsigned long interval_ms = 5000,
                        unsigned long press_ms = 100)
 {

@@ -4466,7 +4466,7 @@ public class MHXXCharmApp extends JFrame {
                 unsigned long wait_ms = %d;
 
                 void waitWithKeepAlive(unsigned long total_ms,
-                                       uint16_t button = Button::X,
+                                       uint16_t button = Button::Y,
                                        unsigned long interval_ms = 5000,
                                        unsigned long press_ms = 100)
                 {
